@@ -1,21 +1,25 @@
 {% extends "base.html" %}
 {% block title %}{{ problem.title }} · MiniOJ{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', path='/vendor/katex/katex.min.css') }}">
+{% endblock %}
 {% block content %}
 <div class="problem-heading">
   <div><p class="eyebrow mono">{{ problem.id }}</p><h1>{{ problem.title }}</h1></div>
   <div class="limit-row"><span>{{ problem.time_limit_ms }} ms</span><span>{{ problem.memory_limit_mb }} MB</span></div>
 </div>
+{% if problem.revision > 1 %}<div class="alert alert-warning" role="alert">This problem has been modified. Earlier submission results may refer to a previous statement or testcase set.</div>{% endif %}
 <div class="problem-layout">
   <article class="problem-copy panel">
-    <section><h2>Statement</h2><div class="prose">{{ problem.statement }}</div></section>
-    {% if problem.input_specification %}<section><h2>Input</h2><div class="prose">{{ problem.input_specification }}</div></section>{% endif %}
-    {% if problem.output_specification %}<section><h2>Output</h2><div class="prose">{{ problem.output_specification }}</div></section>{% endif %}
+    <section><h2>Statement</h2><div class="prose markdown-body">{{ problem.statement|markdown }}</div></section>
+    {% if problem.input_specification %}<section><h2>Input</h2><div class="prose markdown-body">{{ problem.input_specification|markdown }}</div></section>{% endif %}
+    {% if problem.output_specification %}<section><h2>Output</h2><div class="prose markdown-body">{{ problem.output_specification|markdown }}</div></section>{% endif %}
     {% for sample in problem.samples %}
       <section><h2>Example {{ loop.index }}</h2>
         <div class="sample-grid"><div><h3>Input</h3><pre>{{ sample.input }}</pre></div><div><h3>Output</h3><pre>{{ sample.output }}</pre></div></div>
       </section>
     {% endfor %}
-    {% if problem.notes %}<section><h2>Notes</h2><div class="prose">{{ problem.notes }}</div></section>{% endif %}
+    {% if problem.notes %}<section><h2>Notes</h2><div class="prose markdown-body">{{ problem.notes|markdown }}</div></section>{% endif %}
   </article>
   <aside class="workspace panel">
     <div class="workspace-head"><div><span class="label">Language</span><strong>C++20</strong></div><span class="status-dot">Ready</span></div>
@@ -43,6 +47,8 @@ int main() {
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', path='/vendor/katex/katex.min.js') }}"></script>
+<script src="{{ url_for('static', path='/math.js') }}"></script>
 {% if current_user %}
 <script>
 window.MINIOJ = {
@@ -54,4 +60,3 @@ window.MINIOJ = {
 <script src="{{ url_for('static', path='/problem.js') }}"></script>
 {% endif %}
 {% endblock %}
-

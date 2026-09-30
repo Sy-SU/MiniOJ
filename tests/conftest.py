@@ -7,6 +7,7 @@ from pathlib import Path
 TEST_ROOT = Path(tempfile.mkdtemp(prefix="minioj-tests-"))
 os.environ["MINIOJ_DATABASE_URL"] = f"sqlite:///{TEST_ROOT / 'test.db'}"
 os.environ["MINIOJ_DATA_DIR"] = str(TEST_ROOT / "data")
+os.environ["MINIOJ_JOB_DIR"] = str(TEST_ROOT / "jobs")
 os.environ["MINIOJ_SECRET_KEY"] = "test-secret-key-that-is-long-and-stable"
 
 import pytest

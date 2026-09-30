@@ -9,10 +9,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 
+from minioj.config import settings
 from minioj.database import SessionLocal, init_db
-from minioj.judge import DockerJudge, InfrastructureError
-from minioj.models import Problem, Submission, TestCase
-from minioj.problems import testcase_contents
+from minioj.judge import DockerJudge, InfrastructureError, TestcaseBuildError
+from minioj.models import Problem, Submission, TestCase, TestcaseBuild
+from minioj.problems import (
+    add_testcase_batch,
+    ensure_problem_mutable,
+    testcase_contents,
+)
 
 logger = logging.getLogger("minioj.worker")
 running = True
@@ -23,7 +28,7 @@ def _stop(_signum: int, _frame: object) -> None:
     running = False
 
 
-def claim_next_submission() -> str | None:
+def claim_next_submission() -> int | None:
     with SessionLocal() as db:
         submission_id = db.scalar(
             select(Submission.id)
@@ -42,7 +47,108 @@ def claim_next_submission() -> str | None:
         return submission_id if claimed.rowcount == 1 else None
 
 
-def finish_with_ie(submission_id: str, summary: str) -> None:
+def claim_next_testcase_build() -> int | None:
+    with SessionLocal() as db:
+        build_id = db.scalar(
+            select(TestcaseBuild.id)
+            .where(TestcaseBuild.status == "QUEUED")
+            .order_by(TestcaseBuild.created_at)
+            .limit(1)
+        )
+        if build_id is None:
+            return None
+        claimed = db.execute(
+            update(TestcaseBuild)
+            .where(TestcaseBuild.id == build_id, TestcaseBuild.status == "QUEUED")
+            .values(status="RUNNING", started_at=datetime.now(UTC))
+        )
+        db.commit()
+        return build_id if claimed.rowcount == 1 else None
+
+
+def finish_testcase_build_failed(build_id: int, error: str) -> None:
+    logger.error("Testcase build %s: %s", build_id, error)
+    with SessionLocal() as db:
+        build = db.get(TestcaseBuild, build_id)
+        if build and build.status == "RUNNING":
+            build.status = "FAILED"
+            build.error = error[:4000]
+            build.finished_at = datetime.now(UTC)
+            db.commit()
+
+
+def process_testcase_build(build_id: int) -> None:
+    with SessionLocal() as db:
+        build = db.get(TestcaseBuild, build_id)
+        if build is None or build.status != "RUNNING":
+            return
+        standard_source = build.standard_source
+        input_data = build.input_data
+        generator_source = build.generator_source
+        case_count = build.case_count
+        base_seed = build.base_seed
+    try:
+        with SessionLocal() as db:
+            build = db.get(TestcaseBuild, build_id)
+            if build is None or build.status != "RUNNING":
+                return
+            ensure_problem_mutable(db, build.problem_id)
+            if (
+                build.standard_sha256
+                != db.get(Problem, build.problem_id).standard_sha256
+            ):
+                raise ValueError(
+                    "Standard solution has been modified; queue a new testcase build."
+                )
+        cases = DockerJudge().build_testcases(
+            standard_source,
+            input_data=input_data,
+            generator_source=generator_source,
+            case_count=case_count,
+            base_seed=base_seed,
+        )
+        with SessionLocal() as db:
+            build = db.get(TestcaseBuild, build_id)
+            if build is None or build.status != "RUNNING":
+                return
+            problem = db.get(Problem, build.problem_id)
+            if problem is None:
+                raise ValueError("Problem no longer exists.")
+            ensure_problem_mutable(db, problem.id)
+            db.refresh(build)
+            if build.status != "RUNNING":
+                return
+            if build.standard_sha256 != problem.standard_sha256:
+                raise ValueError(
+                    "Standard solution has been modified; queue a new testcase build."
+                )
+
+            def finish(testcases: list[TestCase]) -> None:
+                build.status = "FINISHED"
+                build.error = None
+                build.created_count = len(testcases)
+                build.finished_at = datetime.now(UTC)
+
+            add_testcase_batch(
+                db,
+                problem,
+                build.testcase_type,
+                cases,
+                finalize=finish,
+            )
+    except (InfrastructureError, TestcaseBuildError, OSError, ValueError) as exc:
+        finish_testcase_build_failed(build_id, str(exc))
+        return
+    except Exception:
+        logger.exception(
+            "Unexpected error while building testcases for job %s", build_id
+        )
+        finish_testcase_build_failed(build_id, "Unexpected testcase build error.")
+        return
+    logger.info("Testcase build %s finished: %s case(s)", build_id, len(cases))
+
+
+def finish_with_ie(submission_id: int, summary: str) -> None:
     logger.error("Submission %s: %s", submission_id, summary)
     result = {
         "verdict": "IE",
@@ -52,7 +158,7 @@ def finish_with_ie(submission_id: str, summary: str) -> None:
     }
     with SessionLocal() as db:
         submission = db.get(Submission, submission_id)
-        if submission:
+        if submission and submission.status != "FINISHED":
             submission.status = "FINISHED"
             submission.verdict = "IE"
             submission.judge_result = json.dumps(result)
@@ -60,33 +166,39 @@ def finish_with_ie(submission_id: str, summary: str) -> None:
             db.commit()
 
 
-def judge_submission(submission_id: str) -> None:
-    with SessionLocal() as db:
-        submission = db.get(Submission, submission_id)
-        if submission is None:
-            return
-        problem = db.get(Problem, submission.problem_id)
-        if problem is None:
-            finish_with_ie(submission_id, "Problem no longer exists.")
-            return
-        testcase_rows = db.scalars(
-            select(TestCase)
-            .where(TestCase.problem_id == problem.id)
-            .order_by(TestCase.order)
-        ).all()
-        source_code = submission.source_code
-        time_limit_ms = problem.time_limit_ms
-        memory_limit_mb = problem.memory_limit_mb
-    if not testcase_rows:
-        finish_with_ie(submission_id, "Problem has no testcases.")
-        return
+def judge_submission(submission_id: int) -> None:
     try:
-        tests = [testcase_contents(testcase) for testcase in testcase_rows]
+        with SessionLocal() as db:
+            submission = db.get(Submission, submission_id)
+            if submission is None or submission.status != "COMPILING":
+                return
+            ensure_problem_mutable(db, submission.problem_id)
+            db.refresh(submission)
+            if submission.status != "COMPILING":
+                return
+            problem = db.get(Problem, submission.problem_id)
+            if submission.problem_revision != problem.revision:
+                raise ValueError(
+                    "Problem has been modified before judging started. Please submit again."
+                )
+            testcase_rows = db.scalars(
+                select(TestCase)
+                .where(TestCase.problem_id == problem.id)
+                .order_by(TestCase.order)
+            ).all()
+            if not testcase_rows:
+                raise ValueError("Problem has no testcases.")
+            source_code = submission.source_code
+            time_limit_ms = problem.time_limit_ms
+            memory_limit_mb = problem.memory_limit_mb
+            # Snapshot all judge inputs while serialized with testcase writers.
+            # Release the database lock before starting any containers.
+            tests = [testcase_contents(testcase) for testcase in testcase_rows]
 
         def mark_running() -> None:
             with SessionLocal() as db:
                 row = db.get(Submission, submission_id)
-                if row:
+                if row and row.status == "COMPILING":
                     row.status = "RUNNING"
                     db.commit()
 
@@ -102,7 +214,7 @@ def judge_submission(submission_id: str) -> None:
         return
     with SessionLocal() as db:
         submission = db.get(Submission, submission_id)
-        if submission:
+        if submission and submission.status != "FINISHED":
             submission.compile_result = json.dumps(compile_result)
             submission.judge_result = json.dumps(judge_result)
             submission.verdict = judge_result["verdict"]
@@ -113,6 +225,7 @@ def judge_submission(submission_id: str) -> None:
 
 
 def run_worker(poll_interval: float = 1.0, once: bool = False) -> None:
+    settings.validate_worker()
     logger.info("Starting worker: initializing database")
     init_db()
     judge = DockerJudge()
@@ -123,19 +236,28 @@ def run_worker(poll_interval: float = 1.0, once: bool = False) -> None:
     )
     waiting = False
     while running:
+        did_work = False
+        build_id = claim_next_testcase_build()
+        if build_id:
+            did_work = True
+            waiting = False
+            logger.info("Processing testcase build %s", build_id)
+            process_testcase_build(build_id)
         submission_id = claim_next_submission()
         if submission_id:
+            did_work = True
             waiting = False
             logger.info("Judging submission %s", submission_id)
             judge_submission(submission_id)
-        elif once:
-            logger.info("No queued submissions; worker exiting (--once).")
+        if did_work:
+            continue
+        if once:
+            logger.info("No queued work; worker exiting (--once).")
             return
-        else:
-            if not waiting:
-                logger.info("No queued submissions; waiting for new submissions.")
-                waiting = True
-            time.sleep(poll_interval)
+        if not waiting:
+            logger.info("No queued work; waiting for testcase builds or submissions.")
+            waiting = True
+        time.sleep(poll_interval)
     logger.info("Worker stopped.")
 
 

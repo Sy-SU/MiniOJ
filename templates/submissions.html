@@ -9,7 +9,7 @@
   {% for submission in submissions %}
     <tr>
       <td class="mono"><a href="{{ base_path }}/submissions/{{ submission.id }}">{{ submission.id }}</a></td>
-      <td><a href="{{ base_path }}/problems/{{ submission.problem_id }}">{{ submission.problem.title }}</a></td>
+      <td><a href="{{ base_path }}/problems/{{ submission.problem_id }}">{{ submission.problem.title }}</a>{% if submission.problem_warning %}<div class="alert alert-warning" role="alert">{{ submission.problem_warning }}</div>{% endif %}</td>
       {% if current_user.role == 'admin' %}<td>{{ submission.user.username }}</td>{% endif %}
       <td>{{ submission.language }}</td>
       <td><span class="verdict verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span></td>
@@ -22,4 +22,3 @@
 </table>
 </div>
 {% endblock %}
-

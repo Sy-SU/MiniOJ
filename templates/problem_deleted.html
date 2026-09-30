@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Problem deleted · MiniOJ{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow mono">{{ problem.id }}</p><h1>{{ problem.title }}</h1></div></div>
+<div class="alert alert-warning" role="alert">This problem has been deleted. It no longer accepts submissions. Historical submissions and results are retained for reference.</div>
+<a href="{{ base_path }}/submissions">View submissions</a>
+{% endblock %}

@@ -22,6 +22,7 @@ def main() -> None:
         root = Path(temp_dir)
         os.environ["MINIOJ_DATABASE_URL"] = f"sqlite:///{root / 'smoke.db'}"
         os.environ["MINIOJ_DATA_DIR"] = str(root / "data")
+        os.environ["MINIOJ_JOB_DIR"] = str(root / "jobs")
         os.environ["MINIOJ_SECRET_KEY"] = "isolated-stack-smoke-test-secret"
 
         from fastapi.testclient import TestClient

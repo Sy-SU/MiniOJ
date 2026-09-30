@@ -97,6 +97,7 @@ def test_submission_isolation_and_structured_feedback(client):
     )
     assert response.status_code == 202
     submission_id = response.json()["submission_id"]
+    assert submission_id == 1
     assert (
         client.get(
             f"/api/v1/submissions/{submission_id}", headers=auth(other_token)

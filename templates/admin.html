@@ -5,7 +5,7 @@
 <section class="panel detail-section">
   <div class="section-heading"><h2>Problems</h2><span class="muted">{{ problems|length }}</span></div>
   <div class="table-wrap flush"><table><thead><tr><th>ID</th><th>Title</th><th>Tests</th><th></th></tr></thead><tbody>
-  {% for problem in problems %}<tr><td class="mono">{{ problem.id }}</td><td>{{ problem.title }}</td><td>{{ problem.testcases|length }}</td><td class="actions"><a href="{{ base_path }}/admin/problems/{{ problem.id }}/edit">Edit</a><form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/delete" onsubmit="return confirm('Delete this problem?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button danger" type="submit">Delete</button></form></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">No problems.</td></tr>{% endfor %}
+  {% for problem in problems %}<tr><td class="mono">{{ problem.id }}</td><td>{{ problem.title }}</td><td>{{ problem.testcases|length }}</td><td class="actions"><a href="{{ base_path }}/admin/problems/{{ problem.id }}/edit">Edit</a><form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/delete" onsubmit="return confirm('Delete this problem? It will stop accepting submissions. Existing submissions and results will be kept with a deletion warning.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button danger" type="submit">Delete</button></form></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">No problems.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 <section class="panel detail-section">
@@ -17,8 +17,7 @@
 <section class="panel detail-section">
   <div class="section-heading"><h2>Recent submissions</h2><a href="{{ base_path }}/submissions">View all →</a></div>
   <div class="table-wrap flush"><table><thead><tr><th>ID</th><th>User</th><th>Problem</th><th>Result</th></tr></thead><tbody>
-  {% for submission in submissions %}<tr><td class="mono"><a href="{{ base_path }}/submissions/{{ submission.id }}">{{ submission.id }}</a></td><td>{{ submission.user.username }}</td><td>{{ submission.problem_id }}</td><td><span class="verdict verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">No submissions.</td></tr>{% endfor %}
+  {% for submission in submissions %}<tr><td class="mono"><a href="{{ base_path }}/submissions/{{ submission.id }}">{{ submission.id }}</a></td><td>{{ submission.user.username }}</td><td>{{ submission.problem_id }}{% if submission.problem_warning %}<div class="alert alert-warning" role="alert">{{ submission.problem_warning }}</div>{% endif %}</td><td><span class="verdict verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">No submissions.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}
-

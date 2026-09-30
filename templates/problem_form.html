@@ -1,31 +1,118 @@
 {% extends "base.html" %}
 {% block title %}{{ action }} problem · MiniOJ{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', path='/vendor/katex/katex.min.css') }}">
+{% endblock %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">Problem editor</p><h1>{{ action }} problem</h1></div><a href="{{ base_path }}/admin">Back to admin</a></div>
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
-<section class="panel detail-section">
-<form method="post" class="form-stack wide-form">
+{% if action == 'Update' %}<div class="alert alert-warning">Editing this problem or its testcases keeps existing submissions and results. Earlier submissions will show a warning that the problem has been modified.</div>{% endif %}
+<nav class="editor-nav" aria-label="Problem editor sections">
+  <a href="#problem-content">01 · Problem</a>
+  {% if action == 'Update' %}<a href="#standard-solution">02 · Standard solution</a><a href="#testcase-data">03 · Testcases</a><a href="#testcase-builds">04 · Build history</a>{% endif %}
+</nav>
+<section class="panel detail-section editor-section" id="problem-content" aria-labelledby="problem-content-heading">
+<div class="section-heading editor-section-heading"><div><p class="eyebrow">01 / Problem definition</p><h2 id="problem-content-heading">Statement &amp; limits</h2></div></div>
+<form method="post" class="form-stack wide-form" id="problem-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <div class="form-row"><label>Problem ID<input name="id" value="{{ problem.id if problem else '' }}" placeholder="two-sum" required {% if action == 'Update' %}readonly{% endif %}></label><label>Title<input name="title" value="{{ problem.title if problem else '' }}" required></label></div>
-  <label>Statement<textarea name="statement" rows="9" required>{{ problem.statement if problem else '' }}</textarea></label>
-  <div class="form-row"><label>Input specification<textarea name="input_specification" rows="5">{{ problem.input_specification if problem else '' }}</textarea></label><label>Output specification<textarea name="output_specification" rows="5">{{ problem.output_specification if problem else '' }}</textarea></label></div>
-  <label>Notes<textarea name="notes" rows="4">{{ problem.notes if problem else '' }}</textarea></label>
+  <fieldset class="form-stack editor-fieldset"><legend>Problem &amp; statement</legend>
+  <div class="form-row"><label>Problem ID <small>3-80 letters, numbers, or hyphens</small><input name="id" value="{{ problem.id if problem else '' }}" placeholder="A1001" minlength="3" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9-]{1,78}[A-Za-z0-9]" required {% if action == 'Update' %}readonly{% endif %}></label><label>Title<input name="title" value="{{ problem.title if problem else '' }}" required></label></div>
+  <label>Statement <small>Markdown + LaTeX supported</small><textarea name="statement" rows="9" required>{{ problem.statement if problem else '' }}</textarea></label>
+  <div class="form-row"><label>Input specification <small>Markdown + LaTeX supported</small><textarea name="input_specification" rows="5">{{ problem.input_specification if problem else '' }}</textarea></label><label>Output specification <small>Markdown + LaTeX supported</small><textarea name="output_specification" rows="5">{{ problem.output_specification if problem else '' }}</textarea></label></div>
+  <label>Notes <small>Markdown + LaTeX supported</small><textarea name="notes" rows="4">{{ problem.notes if problem else '' }}</textarea></label>
+  </fieldset>
+  <fieldset class="form-stack editor-fieldset"><legend>Limits &amp; metadata</legend>
   <div class="form-row"><label>Time limit (ms)<input type="number" name="time_limit_ms" min="100" max="30000" value="{{ problem.time_limit_ms if problem else 2000 }}" required></label><label>Memory limit (MB)<input type="number" name="memory_limit_mb" min="16" max="2048" value="{{ problem.memory_limit_mb if problem else 256 }}" required></label><label>Rating<input type="number" name="rating" value="{{ problem.rating or '' if problem else '' }}"></label></div>
   <div class="form-row"><label>Source<input name="source" value="{{ problem.source or '' if problem else '' }}"></label><label>Source ID<input name="source_id" value="{{ problem.source_id or '' if problem else '' }}"></label><label>Source URL<input type="url" name="source_url" value="{{ problem.source_url or '' if problem else '' }}"></label></div>
   <label>Tags <small>Comma-separated</small><input name="tags" value="{{ problem.tags if problem else '' }}" placeholder="arrays, greedy"></label>
-  <button class="button" type="submit">{{ action }} problem</button>
+  </fieldset>
+  <div class="button-row">
+    <button class="button" type="submit">{{ action }} problem</button>
+    <button class="button button-secondary" type="button" id="markdown-preview-button">Preview Markdown</button>
+  </div>
 </form>
 </section>
+<section class="panel detail-section markdown-preview-panel" id="markdown-preview-panel" hidden>
+  <div class="section-heading"><div><p class="eyebrow">Preview</p><h2>Rendered problem</h2></div><span class="muted" id="markdown-preview-status" aria-live="polite"></span></div>
+  <article class="problem-copy" id="markdown-preview-content"></article>
+</section>
 {% if action == 'Update' %}
-<section class="panel detail-section">
-  <div class="section-heading"><div><p class="eyebrow">Judge data</p><h2>Testcases</h2></div><span class="muted">{{ problem.testcases|length }} total</span></div>
-  <div class="test-list">{% for testcase in problem.testcases %}<div><span class="mono">#{{ testcase.order }}</span><span class="tag">{{ testcase.type }}</span><span class="muted">{{ testcase.input_path }}</span></div>{% else %}<div class="empty-state">No testcases. Submissions will receive IE until one is added.</div>{% endfor %}</div>
-  <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases" class="form-stack testcase-form">
+<section class="panel detail-section editor-section" id="standard-solution" aria-labelledby="standard-solution-heading">
+  <div class="section-heading editor-section-heading"><div><p class="eyebrow">02 / Reference program</p><h2 id="standard-solution-heading">C++20 standard solution</h2></div>{% if problem.standard_sha256 %}<span class="tag">saved</span>{% endif %}</div>
+  {% if problem.standard_sha256 %}
+  <p class="muted">The saved source is shown below.{% if problem.standard_updated_at %} Last saved {{ problem.standard_updated_at }}.{% endif %} Only administrators can see or edit it.</p>
+  {% else %}
+  <div class="alert alert-warning">Paste or upload the standard solution before adding inputs or running a generator.</div>
+  {% endif %}
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/standard-solution" class="form-stack" id="standard-source-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Visibility<select name="type"><option value="hidden">Hidden</option><option value="sample">Sample (public)</option><option value="generated">Generated</option></select></label>
-    <div class="form-row"><label>Input<textarea name="input" rows="8" spellcheck="false"></textarea></label><label>Expected output<textarea name="output" rows="8" spellcheck="false" required></textarea></label></div>
-    <button class="button button-secondary" type="submit">Add testcase</button>
+    <label for="standard-source">Standard solution source <small>Paste or edit C++20 here, at most {{ source_limit_bytes }} UTF-8 bytes. Save this separately from the problem statement.</small></label>
+    <textarea id="standard-source" name="standard_source" class="code-editor standard-editor" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off" required>{{ standard_source_draft if standard_source_draft is defined else (problem.standard_source or '') }}</textarea>
+    <div><button class="button" type="submit">Save standard solution</button></div>
+  </form>
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/standard-solution" class="form-stack editor-upload-form" id="standard-file-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Or upload a source file</h3>
+    <label>Standard solution file <small>C++20, UTF-8, at most {{ source_limit_bytes }} bytes. Uploading replaces the saved source above.</small><input type="file" name="standard_file" accept="text/x-c++src,.cc,.cpp,.cxx" required></label>
+    <div><button class="button button-secondary" type="submit">Upload standard solution</button></div>
   </form>
 </section>
+<section class="panel detail-section editor-section" id="testcase-data" aria-labelledby="testcase-data-heading">
+  <div class="section-heading editor-section-heading"><div><p class="eyebrow">03 / Judge data</p><h2 id="testcase-data-heading">Testcases</h2></div><span class="muted">{{ problem.testcases|length }} total</span></div>
+  <p class="muted">The displayed order is unique within this problem. For new uploads, the Worker runs the standard solution and stores its stdout as expected output.</p>
+  <div class="test-list">
+  {% for testcase in problem.testcases %}
+    <div class="panel detail-section">
+      <div><span class="mono">#{{ testcase.order }}</span> <span class="tag">{{ testcase.type }}</span> <span class="muted">created {{ testcase.created_at or 'before timestamp tracking' }}</span></div>
+      <details class="testcase-checksums"><summary>Checksums</summary><div class="muted mono">input {{ testcase.input_sha256 or 'checksum pending' }}<br>output {{ testcase.output_sha256 or 'checksum pending' }}</div></details>
+      <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases/{{ testcase.id }}/edit" class="form-stack testcase-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Visibility<select name="type"><option value="hidden" {% if testcase.type == 'hidden' %}selected{% endif %}>Hidden</option><option value="sample" {% if testcase.type == 'sample' %}selected{% endif %}>Sample (public)</option><option value="generated" {% if testcase.type == 'generated' %}selected{% endif %}>Generated</option></select></label>
+        <button class="button button-small button-secondary" type="submit">Update visibility</button>
+      </form>
+      <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases/{{ testcase.id }}/delete" onsubmit="return confirm('Delete testcase #{{ testcase.order }}?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="link-button danger" type="submit">Delete testcase</button>
+      </form>
+    </div>
+  {% else %}<div class="empty-state">No testcases. Submissions will receive IE until one is built.</div>{% endfor %}
+  </div>
+  {% if problem.standard_sha256 %}
+  <div class="editor-build-options">
+  <section class="editor-subsection" aria-labelledby="input-build-heading">
+  <h3 id="input-build-heading">Build from an input file</h3>
+  <p class="muted">Upload an input; the saved standard solution computes its expected output.</p>
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcase-builds/input" class="form-stack testcase-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Visibility<select name="type"><option value="hidden">Hidden</option><option value="sample">Sample (public)</option></select></label>
+    <label>Input file <small>UTF-8, at most {{ testcase_file_limit_bytes }} bytes</small><input type="file" name="input_file" accept="text/plain,.in" required></label>
+    <button class="button button-secondary" type="submit">Queue input + std</button>
+  </form>
+  </section>
+  <section class="editor-subsection" aria-labelledby="generator-build-heading">
+  <h3 id="generator-build-heading">Build with a C++20 generator</h3>
+  <p class="muted">The generator runs once per case. <span class="mono">argv[1]</span> is the seed and <span class="mono">argv[2]</span> is the 1-based case index; stdout becomes testcase input, then the standard solution computes expected output.</p>
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcase-builds/generator" class="form-stack testcase-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Generator file <small>C++20, UTF-8, at most {{ source_limit_bytes }} bytes</small><input type="file" name="generator_file" accept="text/x-c++src,.cc,.cpp,.cxx" required></label>
+    <div class="form-row"><label>Case count<input type="number" name="case_count" min="1" max="{{ generator_max_cases }}" value="1" required></label><label>Base seed<input type="number" name="base_seed" min="0" max="2147483647" value="1" required></label></div>
+    <button class="button button-secondary" type="submit">Queue generator + std</button>
+  </form>
+  </section>
+  </div>
+  {% endif %}
+</section>
+<section class="panel detail-section editor-section" id="testcase-builds" aria-labelledby="testcase-builds-heading">
+  <div class="section-heading editor-section-heading"><div><p class="eyebrow">04 / Worker queue</p><h2 id="testcase-builds-heading">Testcase builds</h2></div><span class="muted">latest {{ testcase_builds|length }}</span></div>
+  <div class="table-wrap flush"><table><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Cases</th><th>Standard</th><th>Result</th></tr></thead><tbody>
+  {% for build in testcase_builds %}<tr><td class="mono">{{ build.id }}</td><td>{{ build.kind }}</td><td><span class="tag">{{ build.status }}</span></td><td>{{ build.created_count }}/{{ build.case_count }}</td><td class="mono">{{ build.standard_sha256[:12] }}…</td><td>{% if build.error %}<span class="danger">{{ build.error }}</span>{% elif build.status == 'FINISHED' %}created {{ build.created_count }}{% else %}{{ build.created_at }}{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="empty-cell">No testcase build jobs.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='/vendor/katex/katex.min.js') }}"></script>
+<script src="{{ url_for('static', path='/math.js') }}"></script>
+<script>window.MINIOJ_PROBLEM_FORM = {basePath: {{ base_path|tojson }}};</script>
+<script src="{{ url_for('static', path='/problem_form.js') }}"></script>
 {% endblock %}

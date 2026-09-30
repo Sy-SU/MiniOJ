@@ -1,16 +1,76 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve the project directory even when invoked from another directory.
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd -- "$project_dir"
 
-export HTTP_PROXY="${MINIOJ_RESTART_PROXY:-http://127.0.0.1:7897}"
-export HTTPS_PROXY="$HTTP_PROXY"
-export http_proxy="$HTTP_PROXY"
-export https_proxy="$HTTPS_PROXY"
+proxy_url="${MINIOJ_RESTART_PROXY:-}"
+if [[ -z "$proxy_url" ]]; then
+    network_mode=""
+    if command -v wslinfo >/dev/null 2>&1; then
+        network_mode="$(wslinfo --networking-mode 2>/dev/null || true)"
+    fi
+    if [[ -z "$network_mode" ]] && [[ "$(uname -r)" == *[Mm]icrosoft* ]]; then
+        network_mode="nat"
+    fi
+    proxy_host="127.0.0.1"
+    if [[ "$network_mode" == "nat" ]]; then
+        proxy_host="$(ip -4 route show default | awk '$1 == "default" && $2 == "via" {print $3; exit}')"
+        if [[ -z "$proxy_host" ]]; then
+            printf '%s\n' 'Cannot detect the WSL NAT gateway. Set MINIOJ_RESTART_PROXY explicitly.' >&2
+            exit 1
+        fi
+    fi
+    proxy_url="http://${proxy_host}:7897"
+fi
+
+export HTTP_PROXY="$proxy_url"
+export HTTPS_PROXY="$proxy_url"
+export http_proxy="$proxy_url"
+export https_proxy="$proxy_url"
 export NO_PROXY=localhost,127.0.0.1
 export no_proxy="$NO_PROXY"
 
-docker compose up -d --build
+# BuildKit keeps its own proxy environment; shell exports cannot update it.
+builder=minioj-builder
+container=buildx_buildkit_minioj-builder0
+builder_exists=false
+builder_matches=false
+if builder_info="$(docker buildx inspect "$builder" 2>/dev/null)"; then
+    builder_exists=true
+    if ! grep -Eq '^Driver:[[:space:]]+docker-container$' <<< "$builder_info" ||
+       ! grep -Eq '^Name:[[:space:]]+minioj-builder0$' <<< "$builder_info" ||
+       [[ "$(grep -c '^Name:' <<< "$builder_info")" != 2 ]]; then
+        printf '%s\n' 'minioj-builder has an unexpected configuration; refusing to replace it.' >&2
+        exit 1
+    fi
+    container_config="$(docker inspect "$container" --format '{{.HostConfig.NetworkMode}}{{println}}{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null || true)"
+    if grep -Fxq -- 'host' <<< "$container_config" &&
+       grep -Fxq -- "HTTP_PROXY=$HTTP_PROXY" <<< "$container_config" &&
+       grep -Fxq -- "HTTPS_PROXY=$HTTPS_PROXY" <<< "$container_config" &&
+       grep -Fxq -- "NO_PROXY=$NO_PROXY" <<< "$container_config"; then
+        builder_matches=true
+    fi
+fi
+
+if [[ "$builder_matches" != true ]]; then
+    if [[ "$builder_exists" == true ]]; then
+        printf '%s\n' 'Refreshing MiniOJ BuildKit proxy; preserving its cache volume.'
+        docker buildx rm --keep-state "$builder"
+    fi
+    docker buildx create --name "$builder" --node minioj-builder0 \
+        --driver docker-container \
+        --driver-opt network=host \
+        --driver-opt "env.HTTP_PROXY=$HTTP_PROXY" \
+        --driver-opt "env.HTTPS_PROXY=$HTTPS_PROXY" \
+        --driver-opt "\"env.NO_PROXY=$NO_PROXY\""
+fi
+docker buildx inspect "$builder" --bootstrap >/dev/null
+
+# Proxy build arguments reach pip without becoming image ENV settings.
+docker compose build --builder "$builder" \
+    --build-arg HTTP_PROXY --build-arg HTTPS_PROXY \
+    --build-arg http_proxy --build-arg https_proxy \
+    --build-arg NO_PROXY --build-arg no_proxy
+docker compose up -d --no-build --wait --wait-timeout 60
 docker compose restart nginx

@@ -1,0 +1,22 @@
+<section>
+  <h2>Statement</h2>
+  <div class="prose markdown-body">{{ statement|markdown }}</div>
+</section>
+{% if input_specification %}
+<section>
+  <h2>Input</h2>
+  <div class="prose markdown-body">{{ input_specification|markdown }}</div>
+</section>
+{% endif %}
+{% if output_specification %}
+<section>
+  <h2>Output</h2>
+  <div class="prose markdown-body">{{ output_specification|markdown }}</div>
+</section>
+{% endif %}
+{% if notes %}
+<section>
+  <h2>Notes</h2>
+  <div class="prose markdown-body">{{ notes|markdown }}</div>
+</section>
+{% endif %}

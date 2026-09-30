@@ -54,6 +54,8 @@ class TestCaseCreate(BaseModel):
     type: str = "hidden"
     input: str = ""
     output: str = ""
+    input_sha256: str | None = None
+    output_sha256: str | None = None
 
 
 class OrmModel(BaseModel):

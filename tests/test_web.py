@@ -47,7 +47,6 @@ def test_authenticated_web_pages_render_with_real_data(client):
         db.flush()
         db.add(Sample(problem_id=problem.id, input="", output="1\n", order=1))
         submission = Submission(
-            id="sub_web_smoke",
             user_id=user.id,
             problem_id=problem.id,
             language="cpp20",
@@ -66,13 +65,14 @@ def test_authenticated_web_pages_render_with_real_data(client):
         )
         db.add(submission)
         db.commit()
+        submission_id = submission.id
 
     paths = [
         "/",
         "/problems",
         "/problems/web-problem",
         "/submissions",
-        "/submissions/sub_web_smoke",
+        f"/submissions/{submission_id}",
         "/settings",
         "/admin",
         "/admin/problems/new",

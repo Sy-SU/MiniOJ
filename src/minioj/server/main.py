@@ -38,6 +38,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+settings.validate_server()
 app = FastAPI(
     title="MiniOJ",
     version="0.1.0",

@@ -12,8 +12,15 @@ from sqlalchemy.orm import Session
 from minioj.config import settings
 from minioj.database import get_db
 from minioj.judge import DockerJudge, InfrastructureError
-from minioj.models import ApiToken, Problem, Submission, User
-from minioj.problems import add_testcase, remove_problem_files
+from minioj.models import ApiToken, Problem, Submission, TestCase, User
+from minioj.problems import (
+    add_testcase,
+    delete_problem,
+    delete_testcase,
+    ensure_problem_mutable,
+    update_problem,
+    update_testcase,
+)
 from minioj.schemas import (
     ProblemCreate,
     RegisterRequest,
@@ -29,7 +36,6 @@ from minioj.security import (
     hash_password,
     is_reserved_username,
     mask_token,
-    new_submission_id,
     valid_email,
     validate_password,
 )
@@ -106,6 +112,24 @@ def _submission_detail(submission: Submission) -> dict:
         "started_at": _iso(submission.started_at),
         "finished_at": _iso(submission.finished_at),
     }
+
+
+def _testcase_detail(testcase: TestCase) -> dict:
+    return {
+        "id": testcase.id,
+        "type": testcase.type,
+        "order": testcase.order,
+        "input_sha256": testcase.input_sha256,
+        "output_sha256": testcase.output_sha256,
+        "created_at": _iso(testcase.created_at),
+    }
+
+
+def _require_problem_mutable(db: Session, problem_id: str) -> None:
+    try:
+        ensure_problem_mutable(db, problem_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/auth/register", status_code=status.HTTP_201_CREATED)
@@ -233,14 +257,18 @@ def delete_token(
 
 @router.get("/problems")
 def list_problems(db: Session = Depends(get_db)) -> list[dict]:
-    problems = db.scalars(select(Problem).order_by(Problem.created_at.desc())).all()
+    problems = db.scalars(
+        select(Problem)
+        .where(Problem.deleted_at.is_(None))
+        .order_by(Problem.created_at.desc())
+    ).all()
     return [_problem_summary(problem) for problem in problems]
 
 
 @router.get("/problems/{problem_id}")
 def get_problem(problem_id: str, db: Session = Depends(get_db)) -> dict:
     problem = db.get(Problem, problem_id)
-    if problem is None:
+    if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     return _problem_detail(problem)
 
@@ -250,7 +278,7 @@ def get_agent_problem(
     problem_id: str, _user: User = Depends(bearer_user), db: Session = Depends(get_db)
 ) -> dict:
     problem = db.get(Problem, problem_id)
-    if problem is None:
+    if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     return _problem_detail(problem, agent=True)
 
@@ -268,12 +296,15 @@ def create_submission(
         raise HTTPException(status_code=422, detail="Only cpp20 is supported")
     if len(payload.source_code.encode()) > settings.source_limit_bytes:
         raise HTTPException(status_code=413, detail="Source code is too large")
-    if db.get(Problem, payload.problem_id) is None:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    try:
+        ensure_problem_mutable(db, payload.problem_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Problem not found") from exc
+    problem = db.get(Problem, payload.problem_id)
     submission = Submission(
-        id=new_submission_id(),
         user_id=user.id,
         problem_id=payload.problem_id,
+        problem_revision=problem.revision,
         language=payload.language,
         source_code=payload.source_code,
         status="QUEUED",
@@ -285,7 +316,7 @@ def create_submission(
 
 @router.get("/submissions/{submission_id}")
 def get_submission(
-    submission_id: str,
+    submission_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -297,7 +328,7 @@ def get_submission(
 
 @router.get("/agent/submissions/{submission_id}/feedback")
 def get_agent_feedback(
-    submission_id: str,
+    submission_id: int,
     user: User = Depends(bearer_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -367,7 +398,11 @@ def admin_create_problem(
     require_session_csrf(request, authorization)
     if not PROBLEM_ID_RE.fullmatch(payload.id):
         raise HTTPException(
-            status_code=422, detail="Problem id must be a lowercase URL slug"
+            status_code=422,
+            detail=(
+                "Problem id must be 3-80 characters using letters, numbers, or "
+                "hyphens, and must start and end with a letter or number"
+            ),
         )
     if db.get(Problem, payload.id):
         raise HTTPException(status_code=409, detail="Problem id already exists")
@@ -389,13 +424,12 @@ def admin_update_problem(
 ) -> dict:
     require_session_csrf(request, authorization)
     problem = db.get(Problem, problem_id)
-    if problem is None:
+    if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     if payload.id != problem_id:
         raise HTTPException(status_code=422, detail="Problem id cannot be changed")
-    for key, value in payload.model_dump(exclude={"id"}).items():
-        setattr(problem, key, value)
-    db.commit()
+    _require_problem_mutable(db, problem_id)
+    update_problem(db, problem, payload.model_dump(exclude={"id"}))
     return _problem_detail(problem)
 
 
@@ -409,17 +443,12 @@ def admin_delete_problem(
 ) -> Response:
     require_session_csrf(request, authorization)
     problem = db.get(Problem, problem_id)
-    if problem is None:
+    if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
-    if db.scalar(
-        select(Submission.id).where(Submission.problem_id == problem_id).limit(1)
-    ):
-        raise HTTPException(
-            status_code=409, detail="Cannot delete a problem with submissions"
-        )
-    db.delete(problem)
-    db.commit()
-    remove_problem_files(problem_id)
+    try:
+        delete_problem(db, problem)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return Response(status_code=204)
 
 
@@ -436,12 +465,76 @@ def admin_add_testcase(
 ) -> dict:
     require_session_csrf(request, authorization)
     problem = db.get(Problem, problem_id)
-    if problem is None:
+    if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
+    _require_problem_mutable(db, problem_id)
     try:
         testcase = add_testcase(
-            db, problem, payload.type, payload.input, payload.output
+            db,
+            problem,
+            payload.type,
+            payload.input,
+            payload.output,
+            input_sha256=payload.input_sha256,
+            output_sha256=payload.output_sha256,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    return {"id": testcase.id, "type": testcase.type, "order": testcase.order}
+    return _testcase_detail(testcase)
+
+
+@router.put("/admin/problems/{problem_id}/testcases/{testcase_id}")
+def admin_update_testcase(
+    problem_id: str,
+    testcase_id: int,
+    payload: TestCaseCreate,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    _admin: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_session_csrf(request, authorization)
+    problem = db.get(Problem, problem_id)
+    if problem is None or problem.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    _require_problem_mutable(db, problem_id)
+    try:
+        testcase = update_testcase(
+            db,
+            problem,
+            testcase_id,
+            payload.type,
+            input_data=payload.input,
+            output_data=payload.output,
+            input_sha256=payload.input_sha256,
+            output_sha256=payload.output_sha256,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _testcase_detail(testcase)
+
+
+@router.delete(
+    "/admin/problems/{problem_id}/testcases/{testcase_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def admin_delete_testcase(
+    problem_id: str,
+    testcase_id: int,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    _admin: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    require_session_csrf(request, authorization)
+    problem = db.get(Problem, problem_id)
+    if problem is None or problem.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    _require_problem_mutable(db, problem_id)
+    try:
+        delete_testcase(db, problem, testcase_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(status_code=204)

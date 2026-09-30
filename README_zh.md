@@ -125,24 +125,43 @@ conda activate minioj
 
 ## 配置
 
-开发环境可以先生成一个随机 Session Secret：
+启动前先编辑 `.env`。`MINIOJ_SECRET_KEY` 必须替换为至少 32 个字符、长期保持不变的随机值；Server 会拒绝示例占位值和过短值。可以用下面的命令生成并把输出粘贴到 `.env`：
 
 ```bash
-export MINIOJ_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python -c 'import secrets; print(secrets.token_urlsafe(48))'
 ```
 
-部署时应通过环境变量长期保存同一个 Secret。修改它会使已有浏览器 Session 失效。
+MiniOJ 只读取进程环境变量，不会自行解析 `.env`。Docker Compose 会自动读取 `.env`，但只注入 `compose.yaml` 明确映射的变量。在宿主机运行 `minioj`、`uvicorn` 或 `minioj-worker` 时，每个新终端都要先执行：
+
+```bash
+set -a
+. ./.env
+set +a
+```
+
+修改 Secret 会使已有浏览器 Session 失效。
 
 常用配置见 [.env.example](.env.example)：
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `MINIOJ_SECRET_KEY` | 开发用临时值 | Session 签名密钥 |
+| `MINIOJ_SECRET_KEY` | 必须替换的占位值 | 至少 32 个字符的 Session 签名密钥 |
 | `MINIOJ_DATABASE_URL` | `sqlite:///./database/oj.db` | 数据库连接 |
-| `MINIOJ_DATA_DIR` | `./data` | Testcase 和临时 Job 根目录 |
+| `MINIOJ_DATA_DIR` | `./data` | Testcase 根目录 |
+| `MINIOJ_JOB_DIR` | `MINIOJ_DATA_DIR/jobs` | 可独立设置的临时 Job 目录 |
+| `MINIOJ_TESTCASE_FILE_LIMIT_BYTES` | `16777216` | 单个 Testcase 输入或输出文件的最大字节数 |
+| `MINIOJ_TESTCASE_BUILD_TIME_LIMIT_MS` | `10000` | std 或 generator 单次运行时间上限 |
+| `MINIOJ_TESTCASE_BUILD_MEMORY_MB` | `512` | std 或 generator 单次运行内存上限 |
+| `MINIOJ_GENERATOR_MAX_CASES` | `50` | 单个 generator 任务最多生成的用例数 |
 | `MINIOJ_DOCKER_IMAGE` | `minioj-cpp20:latest` | 判题镜像名称 |
 | `MINIOJ_FEEDBACK_POLICY` | `full` | `full`、`diagnostic` 或 `verdict_only` |
 | `MINIOJ_SESSION_HTTPS_ONLY` | `false` | HTTPS 部署时设为 `true` |
+| `MINIOJ_SOURCE_LIMIT_BYTES` | `262144` | Source 最大字节数 |
+| `MINIOJ_STDIN_LIMIT_BYTES` | `262144` | Custom Run 输入最大字节数 |
+| `MINIOJ_OUTPUT_LIMIT_BYTES` | `1048576` | stdout 与 stderr 合并上限 |
+| `MINIOJ_TOKEN_DEFAULT_DAYS` | `90` | Token 默认有效天数 |
+
+未设置 `MINIOJ_JOB_DIR` 时仍沿用现有的 `data/jobs` 布局。宿主机 Worker 可推荐设为 `/tmp/minioj/jobs`，将临时编译和运行文件与需备份的 Testcase 分开。用于 Docker Bind Mount 的目录必须对 Docker Daemon 可见；当前 Compose Custom Run 的限制仍以 [架构文档](docs/architecture.md) 为准。
 
 ## 初始化 MiniOJ
 
@@ -151,6 +170,9 @@ export MINIOJ_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsa
 ```bash
 conda activate minioj
 cd /home/susenyang/github-repos/MiniOJ
+set -a
+. ./.env
+set +a
 ```
 
 构建 C++20 判题镜像：
@@ -187,6 +209,9 @@ minioj create-admin \
 ```bash
 conda activate minioj
 cd /home/susenyang/github-repos/MiniOJ
+set -a
+. ./.env
+set +a
 uvicorn minioj.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -195,6 +220,9 @@ uvicorn minioj.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 conda activate minioj
 cd /home/susenyang/github-repos/MiniOJ
+set -a
+. ./.env
+set +a
 minioj-worker
 ```
 
@@ -256,7 +284,11 @@ docker compose ps
 ./restart
 ```
 
-`restart` 会为本次执行设置大小写两组 HTTP/HTTPS 代理（默认 `http://127.0.0.1:7897`）和本地地址的 `NO_PROXY`，然后运行 `docker compose up -d --build`，仅在成功后重启 Nginx。请保持 Windows 代理开启；脚本不会修改 `.env` 或当前终端的环境。代理端口变化时可运行 `MINIOJ_RESTART_PROXY=http://127.0.0.1:新端口 ./restart`。
+`restart` 会识别 WSL 网络模式：NAT 模式使用当前 IPv4 默认网关（Windows 主机地址），镜像网络模式使用 `127.0.0.1`，默认代理端口为 `7897`。旧版 WSL 无法报告网络模式时，会回退到 NAT 网关。可用 `MINIOJ_RESTART_PROXY=http://主机地址:端口 ./restart` 手动覆盖自动检测。请保持 Windows 代理开启，并允许 WSL 访问。
+
+脚本设置大小写两组 HTTP/HTTPS 代理后，会检查专用的 `minioj-builder` BuildKit 容器。代理变化时，通过 `docker buildx rm --keep-state` 保留缓存卷并重建构建器，然后显式使用它执行 `docker compose build`，同时把代理作为构建参数传给依赖安装步骤。构建成功后执行 `docker compose up -d --no-build --wait`，最后重启 Nginx；准备或构建失败时不会重启应用服务。不要与另一个使用 `minioj-builder` 的构建同时运行。
+
+脚本不会修改 `.env`、当前终端环境或 Docker Daemon 配置。本地已缓存的 BuildKit 镜像可用于启动构建器，因此当前机器不依赖 Daemon 的旧代理完成重建；首次安装需要拉取 BuildKit 镜像，或直接使用 `docker pull` 时，仍需为 Docker Daemon 配置可用代理。缓存保留机制见 [Docker 官方说明](https://docs.docker.com/build/builders/drivers/docker-container/#cache-persistence)。
 
 判题 Worker 不在 Compose 中，需要判题时还要在单独的 WSL 终端启动：
 
@@ -272,10 +304,23 @@ minioj-worker
 
 1. 使用管理员账号登录。
 2. 打开 **Admin → New problem**。
-3. 填写题面与时间、内存限制。
-4. 在编辑页至少添加一个 Testcase。
+3. 填写题面与时间、内存限制。题号为 3–80 位 ASCII 字母、数字或连字符，可保留大小写。题面字段支持安全 CommonMark 和 KaTeX 数学公式：行内公式使用 `$...$`，独立成行的块级公式使用 `$$...$$`。保存前可使用 **Preview Markdown**；内嵌 HTML 会按文本显示，不会启用不安全链接协议。KaTeX 随应用本地提供，浏览器渲染不依赖外部 CDN。
+4. 在编辑页的 **02 · Standard solution** 分区直接粘贴 C++20 标准答案（std），点击 **Save standard solution**；也可以上传 UTF-8 源码文件。保存后源码直接显示在编辑框中，可继续编辑，且仅 Admin 可见。std 与题面分别保存。
+5. 上传 `sample` 或 `hidden` 输入文件，Worker 会运行 std 并把 stdout 保存为输出；也可以上传 C++20 generator，一次生成多个 `generated` Testcase。
 
-`sample` Testcase 会显示在题面上；`hidden` Testcase 只保存在 `data/problems/<problem-id>/tests/`。
+Generator 每次运行时通过 `argv[1]` 接收 seed、通过 `argv[2]` 接收从 1 开始的用例序号；stdout 作为输入，再交给 std 计算输出。任务异步执行，因此必须保持 `minioj-worker` 运行，并刷新编辑页查看 `FINISHED` 或 `FAILED`。编译或运行失败不会创建 Testcase；一个 generator 批次要么全部保存，要么全部回滚。
+
+`sample` 会显示在题面上；`hidden` 和 `generated` 只在服务端保存。每个生成的输入或输出默认最多 16 MiB，并记录 SHA-256；std 和 generator 源码受 `MINIOJ_SOURCE_LIMIT_BYTES` 限制。
+
+已有安装更新后，需要重新构建／重启 Web，并重启宿主机上的 `minioj-worker`；启动时会自动执行兼容数据库升级。当前 Compose 部署可先运行 `./restart`，再重启独立运行的 Worker。
+
+即使已有 Submission，管理员仍可修改题面、限制、std 和 Testcase。题目页显示修改警告；版本早于当前题目的提交在列表和详情中显示“题目已修改，结果可能不再对应当前题目”的警告。已有成绩保留，不自动重判。若排队中的提交在 Worker 读取数据前遇到题目变化，以 `IE` 和明确原因结束，用户可重新提交；已经读取完数据的评测使用读取时的数据继续完成。
+
+警告右上角的 **×** 可关闭当前页面上的提示，刷新后会重新显示。编辑页用编号分区和快捷导航区分题面／限制、std、测试数据和构建历史；输入文件与 generator 构建各有独立面板。
+
+删除题目后，题目从列表下架，不能再提交；原链接显示“题目已删除”，历史提交仍能查看并显示删除警告。采用软删除，数据库记录、测试文件和提交历史保留，题号不允许复用。删除同时取消未完成的 generator 任务；替换 std 后旧 std 任务的结果会被拒绝，同一 std 的多个排队任务仍可正常依次追加用例。
+
+更新后需重启 Web 和 Worker，使两者使用一致的新规则；启动时自动补充版本和删除状态字段，不需要重建数据库。Compose 部署按已有 `./restart` 流程重建 Web 镜像，再单独重启宿主 Worker。
 
 没有 Testcase 的题目可以保存，但其提交会得到 `IE`，避免错误地把不完整题目判为 AC。
 
@@ -307,10 +352,10 @@ curl -X POST http://localhost:8000/api/v1/submissions \
 
 ```bash
 curl -H "Authorization: Bearer $OJ_TOKEN" \
-  http://localhost:8000/api/v1/submissions/sub_replace_me
+  http://localhost:8000/api/v1/submissions/1
 
 curl -H "Authorization: Bearer $OJ_TOKEN" \
-  http://localhost:8000/api/v1/agent/submissions/sub_replace_me/feedback
+  http://localhost:8000/api/v1/agent/submissions/1/feedback
 ```
 
 Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐藏测试数据。
@@ -337,12 +382,16 @@ Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐
 
 - SQLite：`database/oj.db`
 - Testcase：`data/problems/<problem-id>/tests/`
-- 临时 Job：`data/jobs/`，运行结束后自动清理
-- 默认 Source / Stdin 上限：256 KiB
-- 默认 stdout + stderr 上限：1 MiB
-- 默认 API Token 有效期：90 天
+- 临时 Job：`MINIOJ_JOB_DIR`，未设置时为 `MINIOJ_DATA_DIR/jobs`；每次运行结束后清理自己的目录
+- 单个 Testcase 输入或输出文件上限：`MINIOJ_TESTCASE_FILE_LIMIT_BYTES`，默认 16777216 字节
+- std／generator 单次运行限制：`MINIOJ_TESTCASE_BUILD_TIME_LIMIT_MS`，默认 10000 ms；`MINIOJ_TESTCASE_BUILD_MEMORY_MB`，默认 512 MiB
+- 单个 generator 任务最多用例数：`MINIOJ_GENERATOR_MAX_CASES`，默认 50
+- Source 上限：`MINIOJ_SOURCE_LIMIT_BYTES`，默认 262144 字节
+- Custom Run 输入上限：`MINIOJ_STDIN_LIMIT_BYTES`，默认 262144 字节
+- stdout + stderr 合并上限：`MINIOJ_OUTPUT_LIMIT_BYTES`，默认 1048576 字节
+- API Token 默认有效期：`MINIOJ_TOKEN_DEFAULT_DAYS`，默认 90 天
 
-V1 通常只运行一个 Worker。任务领取使用条件更新，可以避免两个 Worker 同时获取相同的 QUEUED Submission，但 SQLite 和单机容量仍然是这一版本的扩展边界。
+V1 通常只运行一个 Worker。Submission 和 TestcaseBuild 都使用条件更新领取 QUEUED 行，但 SQLite 和单机容量仍是扩展边界。Worker 中断时，已经进入 RUNNING 的任务目前需要人工诊断，自动恢复仍待实现。
 
 ## 开发与测试
 
@@ -360,9 +409,10 @@ Docker Daemon 和判题镜像可用时，运行隔离的端到端检查：
 ```bash
 python scripts/smoke_test_stack.py
 python scripts/smoke_test_judge.py
+python scripts/smoke_test_generator.py
 ```
 
-第一个脚本使用临时数据库验证 Custom Run，以及 API → 队列 → Worker → Docker → Feedback 的完整流程；第二个脚本验证 AC、WA、CE、RE、TLE、MLE、OLE 七种 Verdict。两个脚本完成后都会清理临时 Job 和数据，不会使用已配置的生产数据库。
+第一个脚本使用临时数据库验证 Custom Run，以及 API → 队列 → Worker → Docker → Feedback 的完整流程；第二个脚本验证七种 Verdict；第三个脚本会真实编译 C++ generator 和 std，并验证两组自动生成的输入／输出。脚本完成后都会清理临时 Job 和数据，不会使用已配置的生产数据库。
 
 `pytest` 测试套件不需要 Docker，也不会执行不可信程序。两个冒烟测试脚本需要正在运行的 Docker Daemon 和 `minioj-cpp20:latest` 镜像。
 

@@ -18,7 +18,7 @@ EMAIL_LOCAL_RE = re.compile(
 )
 EMAIL_LABEL_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 USERNAME_RE = re.compile(r"^[A-Za-z]{3,10}$")
-PROBLEM_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$")
+PROBLEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{1,78}[A-Za-z0-9]$")
 
 
 def is_reserved_username(username: str) -> bool:
@@ -84,10 +84,6 @@ def mask_token(token: str) -> str:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def new_submission_id() -> str:
-    return "sub_" + secrets.token_urlsafe(12)
 
 
 def csrf_token(session: dict) -> str:

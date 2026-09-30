@@ -5,6 +5,7 @@
   <div><p class="eyebrow mono">{{ submission.id }}</p><h1>Submission result</h1></div>
   <span class="verdict verdict-large verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span>
 </div>
+{% if submission.problem_warning %}<div class="alert alert-warning" role="alert">{{ submission.problem_warning }}</div>{% endif %}
 <div class="stats-grid">
   <div class="stat"><span>Problem</span><strong><a href="{{ base_path }}/problems/{{ submission.problem_id }}">{{ submission.problem.title }}</a></strong></div>
   <div class="stat"><span>Language</span><strong>{{ submission.language }}</strong></div>
@@ -31,4 +32,3 @@
 {% endif %}
 <section class="panel detail-section"><h2>Source code</h2><pre class="source-view"><code>{{ submission.source_code }}</code></pre></section>
 {% endblock %}
-

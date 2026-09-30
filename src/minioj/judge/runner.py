@@ -18,6 +18,10 @@ class InfrastructureError(RuntimeError):
     pass
 
 
+class TestcaseBuildError(RuntimeError):
+    pass
+
+
 @dataclass
 class ProcessResult:
     exit_code: int
@@ -30,6 +34,8 @@ class ProcessResult:
     oom_killed: bool = False
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+    stdout_valid_utf8: bool = True
+    stderr_valid_utf8: bool = True
 
 
 class DockerJudge:
@@ -253,11 +259,25 @@ class DockerJudge:
             self._remove_container(name)
             stdout_size = stdout_file.tell()
             stderr_size = stderr_file.tell()
+            if stdout_size + stderr_size > output_limit:
+                output_exceeded = True
             stdout_file.seek(0)
             stderr_file.seek(0)
-            stdout = stdout_file.read(output_limit).decode(errors="replace")
-            remaining = max(0, output_limit - len(stdout.encode()))
-            stderr = stderr_file.read(remaining).decode(errors="replace")
+            stdout_bytes = stdout_file.read(output_limit)
+            remaining = max(0, output_limit - len(stdout_bytes))
+            stderr_bytes = stderr_file.read(remaining)
+            try:
+                stdout = stdout_bytes.decode("utf-8")
+                stdout_valid_utf8 = True
+            except UnicodeDecodeError:
+                stdout = stdout_bytes.decode("utf-8", errors="replace")
+                stdout_valid_utf8 = False
+            try:
+                stderr = stderr_bytes.decode("utf-8")
+                stderr_valid_utf8 = True
+            except UnicodeDecodeError:
+                stderr = stderr_bytes.decode("utf-8", errors="replace")
+                stderr_valid_utf8 = False
             if infrastructure_error:
                 detail = infrastructure_error
                 if stderr.strip():
@@ -276,6 +296,8 @@ class DockerJudge:
                 oom_killed=oom_killed,
                 stdout_truncated=stdout_size > len(stdout.encode()),
                 stderr_truncated=stderr_size > len(stderr.encode()),
+                stdout_valid_utf8=stdout_valid_utf8,
+                stderr_valid_utf8=stderr_valid_utf8,
             )
 
     def compile(self, job_dir: Path, source_code: str, memory_mb: int) -> ProcessResult:
@@ -300,7 +322,14 @@ class DockerJudge:
         return result
 
     def execute(
-        self, job_dir: Path, stdin_data: str, time_limit_ms: int, memory_limit_mb: int
+        self,
+        job_dir: Path,
+        stdin_data: str,
+        time_limit_ms: int,
+        memory_limit_mb: int,
+        *,
+        arguments: list[str] | None = None,
+        output_limit: int | None = None,
     ) -> ProcessResult:
         name = "minioj-run-" + uuid.uuid4().hex
         timeout_seconds = f"{time_limit_ms / 1000:.3f}s"
@@ -314,6 +343,7 @@ class DockerJudge:
                 "--kill-after=0.2s",
                 timeout_seconds,
                 "/work/main",
+                *(arguments or []),
             ],
             read_only_mount=True,
         )
@@ -324,7 +354,7 @@ class DockerJudge:
             name,
             stdin_data,
             time_limit_ms + 3000,
-            settings.output_limit_bytes,
+            output_limit or settings.output_limit_bytes,
         )
         if (
             result.exit_code in {124, 137}
@@ -382,6 +412,96 @@ class DockerJudge:
             }
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
+
+    @staticmethod
+    def _require_build_success(result: ProcessResult, label: str) -> str:
+        if result.timed_out:
+            reason = "timed out"
+        elif result.output_exceeded:
+            reason = "exceeded the output limit"
+        elif result.oom_killed:
+            reason = "exceeded the memory limit"
+        elif result.exit_code != 0:
+            reason = f"exited with code {result.exit_code}"
+        elif not result.stdout_valid_utf8:
+            reason = "produced output that is not valid UTF-8"
+        else:
+            return result.stdout
+        detail = result.stderr.strip()
+        suffix = f": {detail[:2000]}" if detail else ""
+        raise TestcaseBuildError(f"{label} {reason}{suffix}")
+
+    def build_testcases(
+        self,
+        standard_source: str,
+        *,
+        input_data: str | None = None,
+        generator_source: str | None = None,
+        case_count: int = 1,
+        base_seed: int = 1,
+    ) -> list[tuple[str, str]]:
+        if generator_source is not None:
+            if not 1 <= case_count <= settings.generator_max_cases:
+                raise TestcaseBuildError("Generator case count is outside the limit")
+            if not 0 <= base_seed <= 2_147_483_647:
+                raise TestcaseBuildError("Generator base seed is outside the limit")
+            if base_seed + case_count - 1 > 2_147_483_647:
+                raise TestcaseBuildError("Generator seed range is outside the limit")
+        self.ensure_available()
+        root = Path(tempfile.mkdtemp(prefix="testcase-build-", dir=settings.jobs_dir))
+        standard_dir = root / "standard"
+        generator_dir = root / "generator"
+        standard_dir.mkdir()
+        try:
+            compiled = self.compile(
+                standard_dir, standard_source, settings.testcase_build_memory_mb
+            )
+            self._require_build_success(compiled, "Standard solution compilation")
+            inputs: list[str]
+            if generator_source is None:
+                if input_data is None:
+                    raise TestcaseBuildError("Uploaded testcase input is missing")
+                inputs = [input_data]
+            else:
+                generator_dir.mkdir()
+                compiled_generator = self.compile(
+                    generator_dir,
+                    generator_source,
+                    settings.testcase_build_memory_mb,
+                )
+                self._require_build_success(compiled_generator, "Generator compilation")
+                inputs = []
+                for index in range(1, case_count + 1):
+                    seed = base_seed + index - 1
+                    generated = self.execute(
+                        generator_dir,
+                        "",
+                        settings.testcase_build_time_limit_ms,
+                        settings.testcase_build_memory_mb,
+                        arguments=[str(seed), str(index)],
+                        output_limit=settings.testcase_file_limit_bytes,
+                    )
+                    inputs.append(
+                        self._require_build_success(
+                            generated, f"Generator case {index}"
+                        )
+                    )
+            cases: list[tuple[str, str]] = []
+            for index, generated_input in enumerate(inputs, start=1):
+                standard = self.execute(
+                    standard_dir,
+                    generated_input,
+                    settings.testcase_build_time_limit_ms,
+                    settings.testcase_build_memory_mb,
+                    output_limit=settings.testcase_file_limit_bytes,
+                )
+                expected = self._require_build_success(
+                    standard, f"Standard solution case {index}"
+                )
+                cases.append((generated_input, expected))
+            return cases
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def judge(
         self,

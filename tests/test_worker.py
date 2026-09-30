@@ -28,7 +28,6 @@ def test_worker_maps_judge_infrastructure_failure_to_ie(monkeypatch):
         db.commit()
         add_testcase(db, problem, "hidden", "", "1\n")
         submission = Submission(
-            id="sub_worker_ie",
             user_id=user.id,
             problem_id=problem.id,
             language="cpp20",
@@ -37,15 +36,16 @@ def test_worker_maps_judge_infrastructure_failure_to_ie(monkeypatch):
         )
         db.add(submission)
         db.commit()
+        submission_id = submission.id
 
     def fail_judge(*_args, **_kwargs):
         raise InfrastructureError("daemon unavailable")
 
     monkeypatch.setattr("minioj.worker.main.DockerJudge.judge", fail_judge)
-    judge_submission("sub_worker_ie")
+    judge_submission(submission_id)
 
     with SessionLocal() as db:
-        submission = db.get(Submission, "sub_worker_ie")
+        submission = db.get(Submission, submission_id)
         result = json.loads(submission.judge_result)
         assert submission.status == "FINISHED"
         assert submission.verdict == "IE"

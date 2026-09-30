@@ -4,6 +4,7 @@ import pytest
 
 from minioj.config import settings
 from minioj.judge.runner import DockerJudge, ProcessResult
+from minioj.judge.runner import TestcaseBuildError as BuildError
 
 
 def process(**overrides) -> ProcessResult:
@@ -68,3 +69,70 @@ def test_judge_reports_compile_error_without_running(monkeypatch):
     _, result = judge.judge("broken", [("", "")], 1000, 64)
     assert result["verdict"] == "CE"
     assert result["summary"] == "Compilation failed."
+
+
+def test_testcase_builder_runs_seeded_generator_then_standard_solution(monkeypatch):
+    settings.jobs_dir.mkdir(parents=True, exist_ok=True)
+    judge = DockerJudge("test-image")
+    monkeypatch.setattr(judge, "ensure_available", lambda: None)
+    compiled_sources: list[str] = []
+    monkeypatch.setattr(
+        judge,
+        "compile",
+        lambda _directory, source, _memory: (
+            compiled_sources.append(source) or process(stdout="")
+        ),
+    )
+    calls: list[tuple[str, list[str] | None]] = []
+
+    def execute(
+        directory,
+        stdin_data,
+        _time_limit,
+        _memory_limit,
+        *,
+        arguments=None,
+        output_limit=None,
+    ):
+        assert output_limit == settings.testcase_file_limit_bytes
+        calls.append((stdin_data, arguments))
+        if arguments:
+            return process(stdout=f"{arguments[0]} {arguments[1]}\n")
+        left, right = map(int, stdin_data.split())
+        return process(stdout=f"{left + right}\n")
+
+    monkeypatch.setattr(judge, "execute", execute)
+    cases = judge.build_testcases(
+        "standard source",
+        generator_source="generator source",
+        case_count=2,
+        base_seed=9,
+    )
+
+    assert compiled_sources == ["standard source", "generator source"]
+    assert cases == [("9 1\n", "10\n"), ("10 2\n", "12\n")]
+    assert calls == [
+        ("", ["9", "1"]),
+        ("", ["10", "2"]),
+        ("9 1\n", None),
+        ("10 2\n", None),
+    ]
+
+
+def test_testcase_builder_rejects_generator_output_failure(monkeypatch):
+    settings.jobs_dir.mkdir(parents=True, exist_ok=True)
+    judge = DockerJudge("test-image")
+    monkeypatch.setattr(judge, "ensure_available", lambda: None)
+    monkeypatch.setattr(judge, "compile", lambda *_args, **_kwargs: process(stdout=""))
+    monkeypatch.setattr(
+        judge,
+        "execute",
+        lambda *_args, **_kwargs: process(stdout="x", output_exceeded=True),
+    )
+
+    with pytest.raises(BuildError, match="Generator case 1 exceeded"):
+        judge.build_testcases(
+            "standard source",
+            generator_source="generator source",
+            case_count=1,
+        )
