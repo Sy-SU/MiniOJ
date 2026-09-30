@@ -45,7 +45,7 @@
   <div class="token-list">
   {% for token in tokens %}
     <div class="token-row">
-      <div><strong>{{ token.name }}</strong><span class="mono muted">{{ token.id[:10] }}…{{ token.id[-4:] }}</span><small>Created {{ token.created_at.strftime('%Y-%m-%d') }} · {% if token.revoked_at %}Revoked{% else %}Expires {{ token.expires_at.strftime('%Y-%m-%d') }}{% endif %}</small></div>
+      <div><strong>{{ token.name }}</strong><span class="mono muted">{{ token.token_preview or 'Preview unavailable (older token)' }}</span><small>Created {{ token.created_at.strftime('%Y-%m-%d') }} · {% if token.revoked_at %}Revoked{% else %}Expires {{ token.expires_at.strftime('%Y-%m-%d') }}{% endif %}</small></div>
       <form method="post" action="{{ base_path }}/settings/tokens/{{ token.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-danger button-small" type="submit">Delete</button></form>
     </div>
   {% else %}<div class="empty-state">No API tokens.</div>{% endfor %}

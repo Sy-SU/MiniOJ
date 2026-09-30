@@ -100,3 +100,61 @@ def test_bearer_token_can_delete_itself(client):
         client.delete(f"/api/v1/tokens/{token_id}", headers=headers).status_code == 204
     )
     assert client.get("/api/v1/tokens", headers=headers).status_code == 401
+
+
+@pytest.mark.parametrize("api", [False, True])
+def test_created_token_displays_secret_preview_without_revealing_it_again(client, api):
+    make_token()
+    csrf, _ = login(client)
+    if api:
+        response = client.post(
+            "/api/v1/tokens",
+            json={"name": "preview test"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert response.status_code == 201
+        raw = response.json()["token"]
+        token_id = response.json()["id"]
+    else:
+        response = client.post(
+            "/settings/tokens", data={"csrf_token": csrf, "name": "preview test"}
+        )
+        assert response.status_code == 200
+        raw = re.search(
+            r'<code id="new-api-token"[^>]*>(oj_[^<]+)</code>', response.text
+        ).group(1)
+        with SessionLocal() as db:
+            token_id = db.query(ApiToken).filter_by(name="preview test").one().id
+    expected = raw[:7] + "********" + raw[-4:]
+    with SessionLocal() as db:
+        token = db.get(ApiToken, token_id)
+        assert token.token_preview == expected
+        assert token.token_hash != raw
+        assert raw not in str(token.__dict__)
+    page = client.get("/settings").text
+    assert f'<span class="mono muted">{expected}</span>' in page
+    assert raw not in page
+    listed = client.get("/api/v1/tokens")
+    item = next(token for token in listed.json() if token["id"] == token_id)
+    assert item["token_preview"] == expected
+    assert raw not in listed.text
+    assert (
+        client.get(
+            "/api/v1/tokens", headers={"Authorization": f"Bearer {raw}"}
+        ).status_code
+        == 200
+    )
+
+
+def test_legacy_token_preview_is_not_fabricated_from_id(client):
+    token_id, raw = make_token()
+    _, page = login(client)
+    assert "Preview unavailable (older token)" in page
+    assert f'<span class="mono muted">{token_id[:10]}' not in page
+    assert raw not in page
+    assert (
+        client.get(
+            "/api/v1/tokens", headers={"Authorization": f"Bearer {raw}"}
+        ).status_code
+        == 200
+    )

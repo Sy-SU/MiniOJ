@@ -78,6 +78,10 @@ def create_api_token(days: int = 90) -> tuple[str, str, str, datetime]:
     return token_id, raw, hash_token(raw), expires_at
 
 
+def mask_token(token: str) -> str:
+    return f"{token[:7]}********{token[-4:]}"
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 

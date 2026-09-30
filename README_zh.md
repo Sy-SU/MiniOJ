@@ -250,11 +250,13 @@ docker compose ps
 - Web UI：<http://100.95.57.121/minioj/>
 - 健康检查：<http://100.95.57.121/minioj/healthz>
 
-`--no-build` 会直接使用已经构建好的镜像，适合日常启动。如果修改了源码或 Dockerfile，请改用：
+`--no-build` 会直接使用已经构建好的镜像，适合日常启动。如果修改了源码或 Dockerfile，请在项目根目录执行：
 
 ```bash
-docker compose up -d --build
+./restart
 ```
+
+`restart` 会为本次执行设置大小写两组 HTTP/HTTPS 代理（默认 `http://127.0.0.1:7897`）和本地地址的 `NO_PROXY`，然后运行 `docker compose up -d --build`，仅在成功后重启 Nginx。请保持 Windows 代理开启；脚本不会修改 `.env` 或当前终端的环境。代理端口变化时可运行 `MINIOJ_RESTART_PROXY=http://127.0.0.1:新端口 ./restart`。
 
 判题 Worker 不在 Compose 中，需要判题时还要在单独的 WSL 终端启动：
 
@@ -371,7 +373,7 @@ python scripts/smoke_test_judge.py
 - 密码：至少 10 字符，UTF-8 编码最多 1024 字节；允许空格、符号和中文，不截断、不去除首尾空白。注册和修改密码必须两次输入一致；登录和校验当前密码也会拦截超长输入。
 - 账号相关 POST 请求体最多 16 KiB，超过返回 HTTP 413；无 `Content-Length` 的分块请求同样受限。代码提交不受此账号请求限制影响。
 - 浏览器输入限制与服务端校验共同生效；数据库查询使用参数绑定，HTML 模板保留自动转义。
-- Settings 生成 API Token 后可点击 **Copy**；若浏览器拒绝剪贴板访问，可手动选择并复制。Token 仍只展示一次。点击 **Delete** 会永久删除 Token 并立即使其失效；以前撤销的 Token 也可以删除。
+- Settings 生成 API Token 后可点击 **Copy**；若浏览器拒绝剪贴板访问，可手动选择并复制。完整 Token 仍只展示一次；列表显示实际密钥前 7 位和后 4 位，中间使用 8 个星号，例如 `oj_abcd********wxyz`。数据库只保留密钥哈希与此掩码摘要，启动时会自动补充摘要字段；旧 Token 无法从哈希恢复首尾，显示摘要不可用提示，仍可正常使用或删除。点击 **Delete** 会永久删除 Token 并立即使其失效；以前撤销的 Token 也可以删除。
 
 ## 安全提示
 

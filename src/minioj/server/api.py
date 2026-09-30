@@ -28,6 +28,7 @@ from minioj.security import (
     create_api_token,
     hash_password,
     is_reserved_username,
+    mask_token,
     new_submission_id,
     valid_email,
     validate_password,
@@ -174,6 +175,7 @@ def list_tokens(
         {
             "id": token.id,
             "name": token.name,
+            "token_preview": token.token_preview,
             "created_at": _iso(token.created_at),
             "last_used_at": _iso(token.last_used_at),
             "expires_at": _iso(token.expires_at),
@@ -198,6 +200,7 @@ def create_token(
         user_id=user.id,
         name=payload.name.strip(),
         token_hash=digest,
+        token_preview=mask_token(raw),
         expires_at=expires_at,
     )
     db.add(token)
@@ -206,6 +209,7 @@ def create_token(
         "id": token.id,
         "name": token.name,
         "token": raw,
+        "token_preview": token.token_preview,
         "expires_at": _iso(expires_at),
     }
 

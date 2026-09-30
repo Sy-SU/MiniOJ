@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve the project directory even when invoked from another directory.
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd -- "$project_dir"
+
+export HTTP_PROXY="${MINIOJ_RESTART_PROXY:-http://127.0.0.1:7897}"
+export HTTPS_PROXY="$HTTP_PROXY"
+export http_proxy="$HTTP_PROXY"
+export https_proxy="$HTTPS_PROXY"
+export NO_PROXY=localhost,127.0.0.1
+export no_proxy="$NO_PROXY"
+
+docker compose up -d --build
+docker compose restart nginx

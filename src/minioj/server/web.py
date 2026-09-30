@@ -23,6 +23,7 @@ from minioj.security import (
     csrf_token,
     hash_password,
     is_reserved_username,
+    mask_token,
     password_within_limit,
     valid_csrf,
     valid_email,
@@ -383,6 +384,7 @@ async def web_create_token(
             user_id=user.id,
             name=name,
             token_hash=digest,
+            token_preview=mask_token(raw),
             expires_at=expires_at,
         )
     )

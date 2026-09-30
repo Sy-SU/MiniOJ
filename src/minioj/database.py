@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from minioj.config import settings
@@ -53,3 +53,13 @@ def init_db() -> None:
 
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
+    # create_all does not add columns to databases created by earlier versions.
+    with engine.begin() as connection:
+        if connection.dialect.name == "sqlite":
+            # Serialize schema checks when server and worker start together.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        columns = inspect(connection).get_columns("api_tokens")
+        if "token_preview" not in {column["name"] for column in columns}:
+            connection.exec_driver_sql(
+                "ALTER TABLE api_tokens ADD COLUMN token_preview VARCHAR(19)"
+            )

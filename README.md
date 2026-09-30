@@ -183,6 +183,10 @@ The first script verifies a custom run plus the complete API → queue → worke
 
 The `pytest` suite does not require Docker and does not execute untrusted binaries. The two smoke-test scripts do require a running Docker daemon and the `minioj-cpp20:latest` image.
 
+## Rebuild and restart
+
+Run `./restart` from the project root after changing the source or Dockerfile. It sets both uppercase and lowercase HTTP/HTTPS proxy variables to `http://127.0.0.1:7897`, excludes localhost from proxying, runs `docker compose up -d --build`, then restarts Nginx only if the build/start succeeded. Keep the Windows proxy running. Override the proxy with `MINIOJ_RESTART_PROXY=http://127.0.0.1:PORT ./restart`. The script does not modify `.env` or the calling shell's environment.
+
 ## Account input limits
 
 - New usernames contain 3–10 ASCII letters (`A–Z`, `a–z`), with surrounding whitespace removed. Administrator names remain reserved for public registration. Existing accounts can still log in with their original usernames.
@@ -190,7 +194,7 @@ The `pytest` suite does not require Docker and does not execute untrusted binari
 - Passwords require at least 10 characters and at most 1024 UTF-8 bytes. Spaces, symbols, and Unicode are allowed without trimming or truncation. Registration and password changes require matching confirmation; login and current-password verification also reject oversized passwords.
 - Account POST bodies are limited to 16 KiB (HTTP 413), including chunked requests without `Content-Length`. This limit does not apply to code submissions.
 - Browser limits accompany server validation, parameterized database queries, and automatic HTML escaping.
-- Newly generated API tokens have a **Copy** button in Settings, with manual selection available if clipboard access fails. The token is still shown only once. **Delete** permanently removes a token and immediately invalidates it; previously revoked tokens can also be deleted.
+- Newly generated API tokens have a **Copy** button in Settings, with manual selection available if clipboard access fails. The full token is still shown only once. Lists show its first 7 and last 4 characters separated by 8 asterisks, e.g. `oj_abcd********wxyz`. Only the hash and masked preview are stored in the database. Startup adds the preview column to existing databases; older tokens show an unavailable-preview label because their hashes cannot recover these characters, and remain usable and deletable. **Delete** permanently removes a token and immediately invalidates it; previously revoked tokens can also be deleted.
 
 ## Security notes
 
