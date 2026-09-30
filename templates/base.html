@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MiniOJ{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Main navigation">
+      <a class="brand" href="{{ base_path }}/"><span class="brand-mark">M</span>MiniOJ</a>
+      <div class="nav-links">
+        <a href="{{ base_path }}/problems">Problems</a>
+        {% if current_user %}
+          <a href="{{ base_path }}/submissions">Submissions</a>
+          <a href="{{ base_path }}/settings">Settings</a>
+          {% if current_user.role == 'admin' %}<a href="{{ base_path }}/admin">Admin</a>{% endif %}
+          <form method="post" action="{{ base_path }}/logout" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="link-button" type="submit">Log out</button>
+          </form>
+        {% else %}
+          <a href="{{ base_path }}/login">Log in</a>
+          <a class="button button-small" href="{{ base_path }}/register">Create account</a>
+        {% endif %}
+      </div>
+    </nav>
+  </header>
+  <main class="shell page">
+    {% if flash %}
+      <div class="alert alert-{{ flash.kind }}" role="status">{{ flash.message }}</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="shell footer">MiniOJ · Human-friendly, agent-ready.</footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
+

@@ -1,0 +1,11 @@
+.git
+.env
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+.ruff_cache
+database/*.db
+database/*.db-*
+database/backups/
+data/jobs/*

@@ -1,0 +1,43 @@
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    user: "${MINIOJ_UID:-1000}:${MINIOJ_GID:-1000}"
+    command: uvicorn minioj.server.main:app --host 0.0.0.0 --port 8000
+    environment:
+      MINIOJ_DATABASE_URL: sqlite:////app/database/oj.db
+      MINIOJ_DATA_DIR: /app/data
+      MINIOJ_DOCKER_IMAGE: minioj-cpp20:latest
+      MINIOJ_ROOT_PATH: /minioj
+      MINIOJ_ADMIN_USERNAME: ${MINIOJ_ADMIN_USERNAME:-}
+      MINIOJ_ADMIN_EMAIL: ${MINIOJ_ADMIN_EMAIL:-}
+      MINIOJ_ADMIN_PASSWORD: ${MINIOJ_ADMIN_PASSWORD:-}
+      MINIOJ_SECRET_KEY: ${MINIOJ_SECRET_KEY:?Set MINIOJ_SECRET_KEY in .env}
+    expose:
+      - "8000"
+    volumes:
+      - ./database:/app/database
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${MINIOJ_HTTP_BIND:-100.95.57.121}:80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/minioj/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+

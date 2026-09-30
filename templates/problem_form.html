@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ action }} problem · MiniOJ{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Problem editor</p><h1>{{ action }} problem</h1></div><a href="{{ base_path }}/admin">Back to admin</a></div>
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+<section class="panel detail-section">
+<form method="post" class="form-stack wide-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="form-row"><label>Problem ID<input name="id" value="{{ problem.id if problem else '' }}" placeholder="two-sum" required {% if action == 'Update' %}readonly{% endif %}></label><label>Title<input name="title" value="{{ problem.title if problem else '' }}" required></label></div>
+  <label>Statement<textarea name="statement" rows="9" required>{{ problem.statement if problem else '' }}</textarea></label>
+  <div class="form-row"><label>Input specification<textarea name="input_specification" rows="5">{{ problem.input_specification if problem else '' }}</textarea></label><label>Output specification<textarea name="output_specification" rows="5">{{ problem.output_specification if problem else '' }}</textarea></label></div>
+  <label>Notes<textarea name="notes" rows="4">{{ problem.notes if problem else '' }}</textarea></label>
+  <div class="form-row"><label>Time limit (ms)<input type="number" name="time_limit_ms" min="100" max="30000" value="{{ problem.time_limit_ms if problem else 2000 }}" required></label><label>Memory limit (MB)<input type="number" name="memory_limit_mb" min="16" max="2048" value="{{ problem.memory_limit_mb if problem else 256 }}" required></label><label>Rating<input type="number" name="rating" value="{{ problem.rating or '' if problem else '' }}"></label></div>
+  <div class="form-row"><label>Source<input name="source" value="{{ problem.source or '' if problem else '' }}"></label><label>Source ID<input name="source_id" value="{{ problem.source_id or '' if problem else '' }}"></label><label>Source URL<input type="url" name="source_url" value="{{ problem.source_url or '' if problem else '' }}"></label></div>
+  <label>Tags <small>Comma-separated</small><input name="tags" value="{{ problem.tags if problem else '' }}" placeholder="arrays, greedy"></label>
+  <button class="button" type="submit">{{ action }} problem</button>
+</form>
+</section>
+{% if action == 'Update' %}
+<section class="panel detail-section">
+  <div class="section-heading"><div><p class="eyebrow">Judge data</p><h2>Testcases</h2></div><span class="muted">{{ problem.testcases|length }} total</span></div>
+  <div class="test-list">{% for testcase in problem.testcases %}<div><span class="mono">#{{ testcase.order }}</span><span class="tag">{{ testcase.type }}</span><span class="muted">{{ testcase.input_path }}</span></div>{% else %}<div class="empty-state">No testcases. Submissions will receive IE until one is added.</div>{% endfor %}</div>
+  <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases" class="form-stack testcase-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Visibility<select name="type"><option value="hidden">Hidden</option><option value="sample">Sample (public)</option><option value="generated">Generated</option></select></label>
+    <div class="form-row"><label>Input<textarea name="input" rows="8" spellcheck="false"></textarea></label><label>Expected output<textarea name="output" rows="8" spellcheck="false" required></textarea></label></div>
+    <button class="button button-secondary" type="submit">Add testcase</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

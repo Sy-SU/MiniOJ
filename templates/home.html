@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}MiniOJ · Lightweight online judge{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">C++20 · Docker sandbox · Stable JSON API</p>
+    <h1>One judge for people<br>and coding agents.</h1>
+    <p class="hero-copy">Solve problems in the browser or connect your own coding harness with a scoped API token and structured judge feedback.</p>
+    <div class="button-row">
+      <a class="button" href="{{ base_path }}/problems">Browse problems</a>
+      {% if not current_user %}<a class="button button-secondary" href="{{ base_path }}/register">Create an account</a>{% endif %}
+    </div>
+  </div>
+  <div class="terminal-card" aria-label="Example agent API response">
+    <div class="terminal-top"><span></span><span></span><span></span></div>
+    <pre><code>GET /api/v1/agent/submissions/sub_x/feedback
+
+{
+  "verdict": "AC",
+  "summary": "Accepted. Passed 30 tests.",
+  "resources": {
+    "time_ms": 41,
+    "memory_kb": 4832
+  }
+}</code></pre>
+  </div>
+</section>
+<section class="section-heading">
+  <div><p class="eyebrow">Latest set</p><h2>Recent problems</h2></div>
+  <a href="{{ base_path }}/problems">View all →</a>
+</section>
+{% if problems %}
+<div class="card-grid">
+  {% for problem in problems %}
+    <a class="problem-card" href="{{ base_path }}/problems/{{ problem.id }}">
+      <span class="mono muted">{{ problem.id }}</span>
+      <h3>{{ problem.title }}</h3>
+      <div class="tag-row">
+        {% if problem.rating %}<span class="tag">{{ problem.rating }}</span>{% endif %}
+        {% for tag in problem.tags.split(',')[:3] if tag.strip() %}<span class="tag">{{ tag.strip() }}</span>{% endfor %}
+      </div>
+    </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">No problems yet. An administrator can create the first one.</div>
+{% endif %}
+{% endblock %}
+

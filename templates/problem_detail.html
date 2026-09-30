@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ problem.title }} · MiniOJ{% endblock %}
+{% block content %}
+<div class="problem-heading">
+  <div><p class="eyebrow mono">{{ problem.id }}</p><h1>{{ problem.title }}</h1></div>
+  <div class="limit-row"><span>{{ problem.time_limit_ms }} ms</span><span>{{ problem.memory_limit_mb }} MB</span></div>
+</div>
+<div class="problem-layout">
+  <article class="problem-copy panel">
+    <section><h2>Statement</h2><div class="prose">{{ problem.statement }}</div></section>
+    {% if problem.input_specification %}<section><h2>Input</h2><div class="prose">{{ problem.input_specification }}</div></section>{% endif %}
+    {% if problem.output_specification %}<section><h2>Output</h2><div class="prose">{{ problem.output_specification }}</div></section>{% endif %}
+    {% for sample in problem.samples %}
+      <section><h2>Example {{ loop.index }}</h2>
+        <div class="sample-grid"><div><h3>Input</h3><pre>{{ sample.input }}</pre></div><div><h3>Output</h3><pre>{{ sample.output }}</pre></div></div>
+      </section>
+    {% endfor %}
+    {% if problem.notes %}<section><h2>Notes</h2><div class="prose">{{ problem.notes }}</div></section>{% endif %}
+  </article>
+  <aside class="workspace panel">
+    <div class="workspace-head"><div><span class="label">Language</span><strong>C++20</strong></div><span class="status-dot">Ready</span></div>
+    {% if current_user %}
+      <textarea id="code-editor" class="code-editor" spellcheck="false" aria-label="C++20 source code">#include &lt;bits/stdc++.h&gt;
+using namespace std;
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    return 0;
+}</textarea>
+      <label class="label" for="custom-input">Custom input</label>
+      <textarea id="custom-input" class="custom-input" spellcheck="false">{% if problem.samples %}{{ problem.samples[0].input }}{% endif %}</textarea>
+      <div class="button-row compact">
+        <button class="button button-secondary" id="run-button" type="button">Run code</button>
+        <button class="button" id="submit-button" type="button">Submit</button>
+      </div>
+      <div id="run-result" class="result-box hidden" aria-live="polite"></div>
+    {% else %}
+      <div class="signin-callout"><p>Log in to run and submit C++20 solutions.</p><a class="button" href="{{ base_path }}/login">Log in</a></div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+{% if current_user %}
+<script>
+window.MINIOJ = {
+  basePath: {{ base_path|tojson }},
+  problemId: {{ problem.id|tojson }},
+  csrfToken: {{ csrf_token|tojson }}
+};
+</script>
+<script src="{{ url_for('static', path='/problem.js') }}"></script>
+{% endif %}
+{% endblock %}
+

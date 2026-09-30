@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Settings · MiniOJ{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Account</p><h1>Settings</h1></div></div>
+<div class="settings-grid">
+  <section class="panel detail-section">
+    <h2>Profile</h2>
+    <form method="post" action="{{ base_path }}/settings/profile" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Username<input value="{{ current_user.username }}" disabled></label>
+      <label>Email<input type="email" name="email" value="{{ current_user.email }}" required></label>
+      <button class="button button-secondary" type="submit">Save profile</button>
+    </form>
+  </section>
+  <section class="panel detail-section">
+    <h2>Change password</h2>
+    <form method="post" action="{{ base_path }}/settings/password" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Current password<input type="password" name="current_password" required></label>
+      <label>New password<input type="password" name="password" minlength="10" required></label>
+      <label>Confirm new password<input type="password" name="password_confirmation" minlength="10" required></label>
+      <button class="button button-secondary" type="submit">Change password</button>
+    </form>
+  </section>
+</div>
+<section class="panel detail-section token-section">
+  <div class="section-heading"><div><p class="eyebrow">Agent access</p><h2>API tokens</h2></div></div>
+  <p class="muted">Use tokens as <code>Authorization: Bearer oj_…</code>. The secret is shown only once.</p>
+  {% if revealed_token %}<div class="token-reveal"><strong>Copy your new token now</strong><code>{{ revealed_token }}</code></div>{% endif %}
+  <form method="post" action="{{ base_path }}/settings/tokens" class="inline-create">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label><span class="sr-only">Token name</span><input name="name" placeholder="e.g. macbook-coding-agent" maxlength="100" required></label>
+    <button class="button" type="submit">Create token</button>
+  </form>
+  <div class="token-list">
+  {% for token in tokens %}
+    <div class="token-row">
+      <div><strong>{{ token.name }}</strong><span class="mono muted">{{ token.id }}</span><small>Created {{ token.created_at.strftime('%Y-%m-%d') }} · {% if token.revoked_at %}Revoked{% else %}Expires {{ token.expires_at.strftime('%Y-%m-%d') }}{% endif %}</small></div>
+      {% if not token.revoked_at %}<form method="post" action="{{ base_path }}/settings/tokens/{{ token.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-danger button-small" type="submit">Revoke</button></form>{% endif %}
+    </div>
+  {% else %}<div class="empty-state">No API tokens.</div>{% endfor %}
+  </div>
+</section>
+{% endblock %}
+

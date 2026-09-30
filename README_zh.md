@@ -1,0 +1,382 @@
+# MiniOJ
+
+[English](README.md) | 简体中文
+
+MiniOJ 是一个面向浏览器用户和 Coding Agent 的轻量级多用户在线评测系统。它运行在 WSL Ubuntu 上，使用 SQLite 保存应用数据，并且只在受限的 Docker 容器中编译、执行不可信的 C++20 程序。
+
+## 已实现功能
+
+- 用户注册、登录、退出和签名 Session
+- `user` / `admin` 两级角色与后端权限检查
+- 使用 Argon2 存储密码哈希
+- 只在创建时显示一次的 Agent API Token；数据库仅存 Token 摘要
+- 题面、公开样例和文件系统中的隐藏测试数据
+- 浏览器代码编辑、Custom Run、正式提交、提交历史和详细结果
+- 版本化 REST API、Agent 专用题目数据和结构化 Judge Feedback
+- 与 HTTP Server 分离的 Judge Worker
+- 禁用网络并限制 CPU、内存、PID、权限、执行时间和输出量的 Docker Sandbox
+- C++20 判题，以及 AC、WA、CE、RE、TLE、基础 MLE、OLE、IE Verdict
+
+V1 明确不包含 Contest、排行榜、OAuth、Special Judge、Interactive Problem、Redis 和多语言 Judge。
+
+## 架构
+
+```text
+浏览器 ── Session Cookie ─┐
+                         ├── FastAPI Server ── SQLite
+Agent ─── Bearer Token ──┘          │
+                                    │ QUEUED Submission
+                             独立 Judge Worker
+                                    │
+                             受限 Docker 容器
+                                    │
+                                C++20 程序
+```
+
+Server 不会直接执行用户二进制文件。Worker 调用 Docker，并且只把当前 Job 目录挂载到用户代码容器中。Docker Socket、OJ 数据库、WSL Home 和完整 Testcase 目录都不会挂载到用户程序容器。
+
+## 环境要求
+
+- Windows 的 WSL2
+- Ubuntu 24.04 LTS
+- Conda 或 Miniconda
+- Docker Engine，或开启 WSL Integration 的 Docker Desktop
+- 当前 Linux 用户能够执行 `docker` 命令
+
+## 安装 Docker Engine
+
+下面的命令适用于 Ubuntu 24.04，使用 [Docker 官方 apt 仓库](https://docs.docker.com/engine/install/ubuntu/)。
+
+### 1. 添加官方仓库
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+```
+
+### 2. 安装并启动 Docker
+
+```bash
+sudo apt install -y \
+  docker-ce \
+  docker-ce-cli \
+  containerd.io \
+  docker-buildx-plugin \
+  docker-compose-plugin
+
+sudo systemctl enable --now docker
+sudo systemctl enable containerd
+```
+
+### 3. 允许当前用户执行 Docker
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+执行后关闭所有 WSL 终端，并在 Windows PowerShell 中运行：
+
+```powershell
+wsl --shutdown
+```
+
+重新进入 Ubuntu，然后验证：
+
+```bash
+docker version
+docker compose version
+docker run --rm hello-world
+```
+
+> 注意：`docker` 组成员可以通过 Docker Daemon 获得主机 root 级权限。只应把可信用户加入该组。更多说明见 [Docker Linux 安装后配置](https://docs.docker.com/engine/install/linux-postinstall/)。
+
+## 创建 Conda 环境
+
+进入项目目录：
+
+```bash
+cd /home/susenyang/github-repos/MiniOJ
+conda env create --file environment.yml
+conda activate minioj
+cp .env.example .env
+```
+
+如果 `minioj` 环境已经存在，使用：
+
+```bash
+conda env update --file environment.yml --prune
+conda activate minioj
+```
+
+## 配置
+
+开发环境可以先生成一个随机 Session Secret：
+
+```bash
+export MINIOJ_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+```
+
+部署时应通过环境变量长期保存同一个 Secret。修改它会使已有浏览器 Session 失效。
+
+常用配置见 [.env.example](.env.example)：
+
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `MINIOJ_SECRET_KEY` | 开发用临时值 | Session 签名密钥 |
+| `MINIOJ_DATABASE_URL` | `sqlite:///./database/oj.db` | 数据库连接 |
+| `MINIOJ_DATA_DIR` | `./data` | Testcase 和临时 Job 根目录 |
+| `MINIOJ_DOCKER_IMAGE` | `minioj-cpp20:latest` | 判题镜像名称 |
+| `MINIOJ_FEEDBACK_POLICY` | `full` | `full`、`diagnostic` 或 `verdict_only` |
+| `MINIOJ_SESSION_HTTPS_ONLY` | `false` | HTTPS 部署时设为 `true` |
+
+## 初始化 MiniOJ
+
+确保已经激活 Conda 环境：
+
+```bash
+conda activate minioj
+cd /home/susenyang/github-repos/MiniOJ
+```
+
+构建 C++20 判题镜像：
+
+```bash
+docker build -t minioj-cpp20:latest docker/cpp20
+```
+
+网页和 API 注册只创建普通用户，用户名 `admin`（不区分大小写）以及配置的初始管理员用户名禁止公开注册。管理员必须使用下面的命令创建，创建后直接登录，不要再次注册。
+
+初始化数据库并创建管理员：
+
+```bash
+minioj init-db
+minioj create-admin
+```
+
+也可以用环境变量非交互创建初始管理员：
+
+```bash
+export MINIOJ_ADMIN_USERNAME=admin
+export MINIOJ_ADMIN_EMAIL=admin@example.com
+export MINIOJ_ADMIN_PASSWORD='replace-with-a-strong-password'
+minioj create-admin \
+  --username "$MINIOJ_ADMIN_USERNAME" \
+  --email "$MINIOJ_ADMIN_EMAIL" \
+  --password "$MINIOJ_ADMIN_PASSWORD"
+```
+
+## 启动服务
+
+终端一：
+
+```bash
+conda activate minioj
+cd /home/susenyang/github-repos/MiniOJ
+uvicorn minioj.server.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+终端二：
+
+```bash
+conda activate minioj
+cd /home/susenyang/github-repos/MiniOJ
+minioj-worker
+```
+
+Worker 是前台常驻进程，会占用当前终端，每秒检查一次待判题提交，不会启动后立即返回命令提示符。看到 `Worker ready` 和 `No queued submissions; waiting for new submissions.` 表示已就绪，正在等待任务，并非卡住。请保持此终端运行，在浏览器中提交代码后会显示判题日志；按 `Ctrl+C` 停止。
+
+如需处理完当前队列后自动退出，可运行 `minioj-worker --once`（会处理待判题提交，直到队列为空）。启动日志也会显示数据库初始化和 Docker 判题镜像检查阶段，便于定位启动问题。
+
+访问：
+
+- Web UI：<http://localhost:8000>
+- OpenAPI 文档：<http://localhost:8000/docs>
+- 健康检查：<http://localhost:8000/healthz>
+
+如需通过本机的 Tailscale 地址访问 Nginx 反代，在 `.env` 中设置强随机 `MINIOJ_SECRET_KEY` 后运行：
+
+```bash
+docker compose up -d --build
+```
+
+访问 <http://100.95.57.121/minioj/>。只有 Nginx 对外监听端口，FastAPI 仅在 Compose 内部网络提供服务；Nginx 会把 `/minioj/` 前缀转发给 FastAPI。如果主机地址变化，请修改 `.env` 中的 `MINIOJ_HTTP_BIND`。
+
+Docker 部署时，推荐在正在运行的 Server 容器内创建管理员，确保写入网页使用的同一数据库：
+
+```bash
+docker compose exec server minioj create-admin --username admin
+```
+
+按提示输入邮箱和至少 10 位的密码。成功后命令会打印数据库地址和登录路径；访问 <http://100.95.57.121/minioj/login> 登录。数据库通过 `./database:/app/database` 持久化，容器重建不会删除账号。
+
+如使用 `.env` 自动初始化管理员，必须同时设置 `MINIOJ_ADMIN_USERNAME`、`MINIOJ_ADMIN_EMAIL` 和 `MINIOJ_ADMIN_PASSWORD`，然后运行 `docker compose up -d --no-build`。已有同名、同邮箱且启用的管理员会保留原密码；如果与普通账号或其他邮箱冲突，启动会明确报错，不会静默跳过或自动提权。
+
+Judge Worker 仍建议直接在 WSL 中运行，使 Docker Bind Mount 使用相同的主机路径。生产环境应让 Worker 使用单独、严格受控的 Docker Daemon，不要把通用 Docker Socket 暴露给 Web Server。
+
+### WSL 启动后的日常启动
+
+只需执行一次下面的命令，让 Docker Daemon 随 WSL 的 systemd 启动：
+
+```bash
+sudo systemctl enable docker containerd
+```
+
+`compose.yaml` 已为 Nginx 和 FastAPI 配置 `restart: unless-stopped`。它们创建成功后，Docker Daemon 再次启动时通常会自动恢复。每次 Windows 或 WSL 重启后，也可以执行下面这组幂等命令，确保前端反向代理和后端 API 都已启动：
+
+```bash
+sudo systemctl start docker
+cd /home/susenyang/github-repos/MiniOJ
+docker compose up -d --no-build
+docker compose ps
+```
+
+当 `server` 和 `nginx` 都显示为 `healthy` 后，访问：
+
+- Web UI：<http://100.95.57.121/minioj/>
+- 健康检查：<http://100.95.57.121/minioj/healthz>
+
+`--no-build` 会直接使用已经构建好的镜像，适合日常启动。如果修改了源码或 Dockerfile，请改用：
+
+```bash
+docker compose up -d --build
+```
+
+判题 Worker 不在 Compose 中，需要判题时还要在单独的 WSL 终端启动：
+
+```bash
+conda activate minioj
+cd /home/susenyang/github-repos/MiniOJ
+minioj-worker
+```
+
+普通重启不需要访问 Docker Hub，因此不要求 Windows 代理保持开启；只有首次构建、拉取镜像或重新构建时才需要可用的网络和 Docker 代理。
+
+## 创建第一道题
+
+1. 使用管理员账号登录。
+2. 打开 **Admin → New problem**。
+3. 填写题面与时间、内存限制。
+4. 在编辑页至少添加一个 Testcase。
+
+`sample` Testcase 会显示在题面上；`hidden` Testcase 只保存在 `data/problems/<problem-id>/tests/`。
+
+没有 Testcase 的题目可以保存，但其提交会得到 `IE`，避免错误地把不完整题目判为 AC。
+
+## Agent API 快速开始
+
+登录网页，在 **Settings → API tokens** 创建 Token，并立即保存显示的 Secret。它之后无法恢复。
+
+```bash
+export OJ_TOKEN='oj_replace_me'
+```
+
+获取为 Agent 清洗后的题目：
+
+```bash
+curl -H "Authorization: Bearer $OJ_TOKEN" \
+  http://localhost:8000/api/v1/agent/problems/two-sum
+```
+
+提交 C++20 代码：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/submissions \
+  -H "Authorization: Bearer $OJ_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"problem_id":"two-sum","language":"cpp20","source_code":"#include <iostream>\nint main(){return 0;}"}'
+```
+
+查询状态和结构化反馈：
+
+```bash
+curl -H "Authorization: Bearer $OJ_TOKEN" \
+  http://localhost:8000/api/v1/submissions/sub_replace_me
+
+curl -H "Authorization: Bearer $OJ_TOKEN" \
+  http://localhost:8000/api/v1/agent/submissions/sub_replace_me/feedback
+```
+
+Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐藏测试数据。
+
+## 主要 API
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | 注册用户 |
+| `GET` | `/api/v1/me` | 查询当前身份 |
+| `GET/POST` | `/api/v1/tokens` | 查询或创建自己的 Token |
+| `DELETE` | `/api/v1/tokens/{id}` | 撤销自己的 Token |
+| `GET` | `/api/v1/problems` | 公开题目列表 |
+| `GET` | `/api/v1/problems/{id}` | 公开题目详情 |
+| `GET` | `/api/v1/agent/problems/{id}` | 清洗后的 Agent 题目数据 |
+| `POST` | `/api/v1/runs` | 同步 Custom Run |
+| `POST` | `/api/v1/submissions` | 创建 Submission，返回 `202` |
+| `GET` | `/api/v1/submissions/{id}` | 查询稳定的状态和结果字段 |
+| `GET` | `/api/v1/agent/submissions/{id}/feedback` | 获取结构化调试反馈 |
+
+使用 Cookie 认证的 API 写操作必须携带 `X-CSRF-Token`；内置网页会自动处理。Bearer Token 请求不需要 CSRF Token。
+
+## 数据目录
+
+- SQLite：`database/oj.db`
+- Testcase：`data/problems/<problem-id>/tests/`
+- 临时 Job：`data/jobs/`，运行结束后自动清理
+- 默认 Source / Stdin 上限：256 KiB
+- 默认 stdout + stderr 上限：1 MiB
+- 默认 API Token 有效期：90 天
+
+V1 通常只运行一个 Worker。任务领取使用条件更新，可以避免两个 Worker 同时获取相同的 QUEUED Submission，但 SQLite 和单机容量仍然是这一版本的扩展边界。
+
+## 开发与测试
+
+```bash
+conda activate minioj
+ruff check src tests
+pytest
+```
+
+自动化测试不需要 Docker，也不会执行不可信程序。部署前仍应至少进行一次真实 Docker 提交测试。
+
+## 安全提示
+
+- 对外提供服务前必须配置高强度、持久化的 `MINIOJ_SECRET_KEY`。
+- HTTPS 部署时设置 `MINIOJ_SESSION_HTTPS_ONLY=true`。
+- 不要暴露未认证的 Docker TCP Socket。
+- Docker 隔离能够降低风险，但面对真正恶意的公开评测负载时，仍建议使用专用主机或 VM，并进一步加固内核级 Sandbox。
+- SQLite 数据库和 `data/problems` 必须一起备份，避免 Testcase Metadata 与文件不一致。
+- Docker 发布端口可能绕过部分 UFW 规则；部署到公网前应阅读 Docker 官方防火墙说明。
+
+## 常见问题
+
+检查 Docker 服务：
+
+```bash
+systemctl status docker --no-pager
+journalctl -u docker --no-pager -n 100
+```
+
+如果 WSL 没有运行 systemd，请在 `/etc/wsl.conf` 中启用：
+
+```ini
+[boot]
+systemd=true
+```
+
+然后在 Windows PowerShell 中运行 `wsl --shutdown` 并重新进入 Ubuntu。
+
+如果刚加入 `docker` 组后仍然出现 Socket 权限错误，请完全退出并重新进入 WSL，而不是使用 `sudo docker` 生成 root 所有的用户配置文件。

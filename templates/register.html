@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Create account · MiniOJ{% endblock %}
+{% block content %}
+<div class="auth-layout">
+  <section class="panel auth-panel">
+    <p class="eyebrow">Get started</p>
+    <h1>Create your account</h1>
+    <p class="muted">Create a standard account for browser submissions and Agent API tokens. Administrator accounts are created by the site operator.</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Username<input name="username" value="{{ username or '' }}" required minlength="3" maxlength="50" autocomplete="username"></label>
+      <label>Email<input type="email" name="email" value="{{ email or '' }}" required autocomplete="email"></label>
+      <label>Password<input type="password" name="password" required minlength="10" autocomplete="new-password"><small>At least 10 characters.</small></label>
+      <label>Confirm password<input type="password" name="password_confirmation" required autocomplete="new-password"></label>
+      <button class="button" type="submit">Create account</button>
+    </form>
+    <p class="auth-switch">Already registered? <a href="{{ base_path }}/login">Log in</a></p>
+  </section>
+</div>
+{% endblock %}
+
