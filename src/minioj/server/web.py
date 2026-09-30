@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -15,13 +14,18 @@ from minioj.database import get_db
 from minioj.models import ApiToken, Problem, Submission, User
 from minioj.problems import add_testcase, remove_problem_files
 from minioj.security import (
+    EMAIL_MAX_LENGTH,
+    PASSWORD_MAX_BYTES,
     PROBLEM_ID_RE,
+    USERNAME_MAX_LENGTH,
     USERNAME_RE,
     create_api_token,
     csrf_token,
     hash_password,
     is_reserved_username,
+    password_within_limit,
     valid_csrf,
+    valid_email,
     validate_password,
     verify_password,
 )
@@ -41,6 +45,9 @@ def _user(request: Request, db: Session) -> User | None:
 
 def _context(request: Request, db: Session, **values: object) -> dict:
     return {
+        "username_max_length": USERNAME_MAX_LENGTH,
+        "email_max_length": EMAIL_MAX_LENGTH,
+        "password_max_bytes": PASSWORD_MAX_BYTES,
         "request": request,
         "current_user": _user(request, db),
         "csrf_token": csrf_token(request.session),
@@ -117,10 +124,10 @@ async def register(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
     confirmation = str(form.get("password_confirmation", ""))
     error = None
     if not USERNAME_RE.fullmatch(username):
-        error = "Username must be 3-50 letters, numbers, dots, dashes, or underscores."
+        error = "Username must contain 3-10 English letters (A-Z or a-z)."
     elif is_reserved_username(username):
         error = "This username is reserved for an administrator. Please choose another."
-    elif "@" not in email or len(email) > 255:
+    elif not valid_email(email):
         error = "Please enter a valid email address."
     elif password != confirmation:
         error = "Passwords do not match."
@@ -130,7 +137,13 @@ async def register(request: Request, db: Session = Depends(get_db)) -> HTMLRespo
         return templates.TemplateResponse(
             request=request,
             name="register.html",
-            context=_context(request, db, error=error, username=username, email=email),
+            context=_context(
+                request,
+                db,
+                error=error,
+                username=username[:USERNAME_MAX_LENGTH],
+                email=email[:EMAIL_MAX_LENGTH],
+            ),
             status_code=422,
         )
     user = User(
@@ -176,11 +189,13 @@ async def login(request: Request, db: Session = Depends(get_db)) -> HTMLResponse
     _check_form_csrf(request, form)
     identity = str(form.get("identity", "")).strip()
     password = str(form.get("password", ""))
-    user = db.scalar(
-        select(User).where(
-            (User.username == identity) | (User.email == identity.lower())
+    user = None
+    if len(identity) <= EMAIL_MAX_LENGTH and password_within_limit(password):
+        user = db.scalar(
+            select(User).where(
+                (User.username == identity) | (User.email == identity.lower())
+            )
         )
-    )
     if (
         user is None
         or not user.is_active
@@ -193,7 +208,7 @@ async def login(request: Request, db: Session = Depends(get_db)) -> HTMLResponse
                 request,
                 db,
                 error="Invalid credentials or inactive account.",
-                identity=identity,
+                identity=identity[:EMAIL_MAX_LENGTH],
             ),
             status_code=401,
         )
@@ -308,7 +323,7 @@ async def update_profile(
     form = await request.form()
     _check_form_csrf(request, form)
     email = str(form.get("email", "")).strip().lower()
-    if "@" not in email or len(email) > 255:
+    if not valid_email(email):
         _flash(request, "Please enter a valid email.", "error")
         return _redirect(request, "/settings")
     user.email = email
@@ -333,12 +348,14 @@ async def update_password(
     current = str(form.get("current_password", ""))
     password = str(form.get("password", ""))
     confirmation = str(form.get("password_confirmation", ""))
-    if not verify_password(current, user.password_hash):
+    if error := validate_password(password):
+        _flash(request, error, "error")
+    elif not password_within_limit(confirmation):
+        _flash(request, "Password confirmation is too long or invalid.", "error")
+    elif not verify_password(current, user.password_hash):
         _flash(request, "Current password is incorrect.", "error")
     elif password != confirmation:
         _flash(request, "New passwords do not match.", "error")
-    elif error := validate_password(password):
-        _flash(request, error, "error")
     else:
         user.password_hash = hash_password(password)
         db.commit()
@@ -377,8 +394,8 @@ async def web_create_token(
     return _redirect(request, "/settings")
 
 
-@router.post("/settings/tokens/{token_id}/revoke")
-async def web_revoke_token(
+@router.post("/settings/tokens/{token_id}/delete")
+async def web_delete_token(
     token_id: str, request: Request, db: Session = Depends(get_db)
 ) -> RedirectResponse:
     user = _require_user(request, db)
@@ -389,9 +406,9 @@ async def web_revoke_token(
     token = db.get(ApiToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status_code=404, detail="Token not found")
-    token.revoked_at = token.revoked_at or datetime.now(UTC)
+    db.delete(token)
     db.commit()
-    _flash(request, "Token revoked.")
+    _flash(request, "Token deleted.")
     return _redirect(request, "/settings")
 
 

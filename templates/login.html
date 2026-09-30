@@ -8,8 +8,8 @@
     {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>Username or email<input name="identity" value="{{ identity or '' }}" required autocomplete="username"></label>
-      <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+      <label>Username or email<input name="identity" maxlength="{{ email_max_length }}" value="{{ identity or '' }}" required autocomplete="username"></label>
+      <label>Password<input type="password" name="password" maxlength="{{ password_max_bytes }}" required autocomplete="current-password"></label>
       <button class="button" type="submit">Log in</button>
     </form>
     <p class="auth-switch">New here? <a href="{{ base_path }}/register">Create an account</a></p>

@@ -59,7 +59,7 @@ def auth(token: str) -> dict[str, str]:
 
 def test_register_and_duplicate_conflict(client):
     payload = {
-        "username": "new_user",
+        "username": "newuser",
         "email": "new@example.com",
         "password": "long-enough-password",
         "password_confirmation": "long-enough-password",

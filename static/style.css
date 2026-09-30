@@ -147,6 +147,9 @@ pre { overflow: auto; margin: 0; padding: 1rem; border: 1px solid #e2e8f0; borde
 .settings-grid .detail-section { margin-top: 0; }
 .token-section { margin-top: 1rem; }
 .token-reveal { display: flex; flex-direction: column; gap: .5rem; margin: 1rem 0; padding: 1rem; border: 1px solid #9dbbd8; border-radius: 9px; background: var(--accent-soft); }
+.token-copy-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.token-copy-row code { flex: 1; min-width: 0; user-select: all; }
+.token-copy-row button { flex-shrink: 0; }
 .token-reveal code { overflow-wrap: anywhere; font-size: .86rem; }
 .inline-create { display: flex; align-items: end; gap: .6rem; margin: 1.2rem 0; }
 .inline-create label { flex: 1; }

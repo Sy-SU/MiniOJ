@@ -24,6 +24,7 @@ class ProcessResult:
     stdout: str
     stderr: str
     time_ms: int
+    memory_kb: int = 0
     timed_out: bool = False
     output_exceeded: bool = False
     oom_killed: bool = False
@@ -38,18 +39,36 @@ class DockerJudge:
     def ensure_available(self) -> None:
         if shutil.which("docker") is None:
             raise InfrastructureError("Docker CLI is not installed or is not on PATH.")
-        check = subprocess.run(
-            ["docker", "image", "inspect", self.image],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=10,
-            check=False,
-        )
+        try:
+            check = subprocess.run(
+                ["docker", "image", "inspect", self.image],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise InfrastructureError(
+                f"Could not inspect Docker judge image: {exc}"
+            ) from exc
         if check.returncode != 0:
             raise InfrastructureError(
                 f"Judge image {self.image!r} is unavailable. Build it with: "
                 "docker build -t minioj-cpp20:latest docker/cpp20"
             )
+
+    @staticmethod
+    def _remove_container(name: str) -> None:
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def _container_command(
         self,
@@ -60,12 +79,15 @@ class DockerJudge:
         *,
         read_only_mount: bool,
     ) -> list[str]:
-        mode = "ro" if read_only_mount else "rw"
+        mount_spec = f"type=bind,source={mount},target=/work"
+        if read_only_mount:
+            mount_spec += ",readonly"
         return [
             "docker",
-            "run",
+            "create",
             "--name",
             name,
+            "--interactive",
             "--network",
             "none",
             "--cpus",
@@ -88,10 +110,27 @@ class DockerJudge:
             "--workdir",
             "/work",
             "--mount",
-            f"type=bind,source={mount},target=/work,{mode}",
+            mount_spec,
             self.image,
             *command,
         ]
+
+    @staticmethod
+    def _read_container_memory_peak(container_id: str | None) -> int:
+        if not container_id:
+            return 0
+        candidates = (
+            Path(
+                f"/sys/fs/cgroup/system.slice/docker-{container_id}.scope/memory.peak"
+            ),
+            Path(f"/sys/fs/cgroup/docker/{container_id}/memory.peak"),
+        )
+        for path in candidates:
+            try:
+                return max(0, int(path.read_text(encoding="utf-8").strip()) // 1024)
+            except (OSError, ValueError):
+                continue
+        return 0
 
     def _run_limited(
         self,
@@ -108,20 +147,50 @@ class DockerJudge:
         ):
             input_file.write(stdin_data.encode())
             input_file.seek(0)
+            try:
+                creation = subprocess.run(
+                    cmd,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                self._remove_container(name)
+                raise InfrastructureError(
+                    f"Could not create Docker container: {exc}"
+                ) from exc
+            if creation.returncode != 0:
+                detail = creation.stderr.strip() or creation.stdout.strip()
+                self._remove_container(name)
+                raise InfrastructureError(
+                    f"Docker could not create the judge container: {detail[:2000]}"
+                )
+            container_id = creation.stdout.strip()
+            if not container_id:
+                self._remove_container(name)
+                raise InfrastructureError("Docker create returned no container id.")
             started = time.monotonic()
             try:
                 process = subprocess.Popen(
-                    cmd,
+                    ["docker", "start", "--attach", "--interactive", name],
                     stdin=input_file,
                     stdout=stdout_file,
                     stderr=stderr_file,
                     start_new_session=True,
                 )
             except OSError as exc:
-                raise InfrastructureError(f"Could not start Docker: {exc}") from exc
+                self._remove_container(name)
+                raise InfrastructureError(
+                    f"Could not start Docker container: {exc}"
+                ) from exc
             timed_out = False
             output_exceeded = False
+            memory_peak_kb = 0
             while process.poll() is None:
+                memory_peak_kb = max(
+                    memory_peak_kb, self._read_container_memory_peak(container_id)
+                )
                 elapsed_ms = int((time.monotonic() - started) * 1000)
                 if elapsed_ms > timeout_ms:
                     timed_out = True
@@ -129,15 +198,22 @@ class DockerJudge:
                 if stdout_file.tell() + stderr_file.tell() > output_limit:
                     output_exceeded = True
                     break
-                time.sleep(0.01)
+                time.sleep(0.002)
+            memory_peak_kb = max(
+                memory_peak_kb, self._read_container_memory_peak(container_id)
+            )
+            infrastructure_error: str | None = None
             if timed_out or output_exceeded:
-                subprocess.run(
-                    ["docker", "kill", name],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    check=False,
-                )
+                try:
+                    subprocess.run(
+                        ["docker", "kill", name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    infrastructure_error = f"Could not stop Docker container: {exc}"
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
@@ -145,28 +221,36 @@ class DockerJudge:
                     process.wait()
             exit_code = process.returncode or 0
             elapsed_ms = int((time.monotonic() - started) * 1000)
-            inspect = subprocess.run(
-                ["docker", "inspect", "-f", "{{json .State}}", name],
-                text=True,
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
             oom_killed = False
-            if inspect.returncode == 0:
-                try:
-                    state = json.loads(inspect.stdout)
-                    oom_killed = bool(state.get("OOMKilled"))
-                    exit_code = int(state.get("ExitCode", exit_code))
-                except (ValueError, TypeError):
-                    pass
-            subprocess.run(
-                ["docker", "rm", "-f", name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
+            try:
+                inspect = subprocess.run(
+                    ["docker", "inspect", "-f", "{{json .State}}", name],
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                infrastructure_error = f"Could not inspect Docker container: {exc}"
+            else:
+                if inspect.returncode == 0:
+                    try:
+                        state = json.loads(inspect.stdout)
+                    except (ValueError, TypeError):
+                        infrastructure_error = (
+                            "Docker returned an invalid container state."
+                        )
+                    else:
+                        state_error = str(state.get("Error") or "").strip()
+                        if state_error:
+                            infrastructure_error = state_error
+                        oom_killed = bool(state.get("OOMKilled"))
+                        exit_code = int(state.get("ExitCode", exit_code))
+                else:
+                    infrastructure_error = (
+                        inspect.stderr.strip() or "Container was not created."
+                    )
+            self._remove_container(name)
             stdout_size = stdout_file.tell()
             stderr_size = stderr_file.tell()
             stdout_file.seek(0)
@@ -174,11 +258,19 @@ class DockerJudge:
             stdout = stdout_file.read(output_limit).decode(errors="replace")
             remaining = max(0, output_limit - len(stdout.encode()))
             stderr = stderr_file.read(remaining).decode(errors="replace")
+            if infrastructure_error:
+                detail = infrastructure_error
+                if stderr.strip():
+                    detail = f"{detail}: {stderr.strip()}"
+                raise InfrastructureError(
+                    f"Docker infrastructure failure: {detail[:2000]}"
+                )
             return ProcessResult(
                 exit_code=exit_code,
                 stdout=stdout,
                 stderr=stderr,
                 time_ms=elapsed_ms,
+                memory_kb=memory_peak_kb,
                 timed_out=timed_out,
                 output_exceeded=output_exceeded,
                 oom_killed=oom_killed,
@@ -264,7 +356,7 @@ class DockerJudge:
                     "stderr": compiled.stderr,
                     "exit_code": compiled.exit_code,
                     "time_ms": compiled.time_ms,
-                    "memory_kb": 0,
+                    "memory_kb": compiled.memory_kb,
                     "stdout_truncated": False,
                     "stderr_truncated": compiled.stderr_truncated,
                 }
@@ -284,7 +376,7 @@ class DockerJudge:
                 "stderr": result.stderr,
                 "exit_code": result.exit_code,
                 "time_ms": result.time_ms,
-                "memory_kb": 0,
+                "memory_kb": result.memory_kb,
                 "stdout_truncated": result.stdout_truncated,
                 "stderr_truncated": result.stderr_truncated,
             }
@@ -314,17 +406,22 @@ class DockerJudge:
                     "verdict": "CE",
                     "summary": "Compilation failed.",
                     "tests": {"total": len(tests), "passed": 0, "failed_test": None},
-                    "resources": {"time_ms": compiled.time_ms, "memory_kb": 0},
+                    "resources": {
+                        "time_ms": compiled.time_ms,
+                        "memory_kb": compiled.memory_kb,
+                    },
                 }
             if on_compiled is not None:
                 on_compiled()
             max_time = 0
+            max_memory = 0
             passed = 0
             for index, (input_data, expected) in enumerate(tests, start=1):
                 result = self.execute(
                     job_dir, input_data, time_limit_ms, memory_limit_mb
                 )
                 max_time = max(max_time, result.time_ms)
+                max_memory = max(max_memory, result.memory_kb)
                 verdict = None
                 if result.timed_out:
                     verdict = "TLE"
@@ -353,7 +450,7 @@ class DockerJudge:
                             "failed_test": index,
                         },
                         "failure": failure,
-                        "resources": {"time_ms": max_time, "memory_kb": 0},
+                        "resources": {"time_ms": max_time, "memory_kb": max_memory},
                         "limits": {
                             "time_ms": time_limit_ms,
                             "memory_mb": memory_limit_mb,
@@ -366,7 +463,7 @@ class DockerJudge:
                 "verdict": "AC",
                 "summary": f"Accepted. Passed {passed} test(s).",
                 "tests": {"total": len(tests), "passed": passed, "failed_test": None},
-                "resources": {"time_ms": max_time, "memory_kb": 0},
+                "resources": {"time_ms": max_time, "memory_kb": max_memory},
             }
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)

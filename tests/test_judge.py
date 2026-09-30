@@ -30,7 +30,7 @@ def configured_judge(
 
 
 def test_judge_accepts_normalized_output_and_calls_running_hook(monkeypatch):
-    judge = configured_judge(monkeypatch, process(stdout="3  \n\n"))
+    judge = configured_judge(monkeypatch, process(stdout="3  \n\n", memory_kb=4096))
     transitions: list[str] = []
     compile_data, result = judge.judge(
         "int main(){}",
@@ -42,6 +42,7 @@ def test_judge_accepts_normalized_output_and_calls_running_hook(monkeypatch):
     assert compile_data["success"] is True
     assert result["verdict"] == "AC"
     assert transitions == ["RUNNING"]
+    assert result["resources"]["memory_kb"] == 4096
 
 
 @pytest.mark.parametrize(

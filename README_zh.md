@@ -320,7 +320,7 @@ Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐
 | `POST` | `/api/v1/auth/register` | 注册用户 |
 | `GET` | `/api/v1/me` | 查询当前身份 |
 | `GET/POST` | `/api/v1/tokens` | 查询或创建自己的 Token |
-| `DELETE` | `/api/v1/tokens/{id}` | 撤销自己的 Token |
+| `DELETE` | `/api/v1/tokens/{id}` | 删除自己的 Token，立即失效 |
 | `GET` | `/api/v1/problems` | 公开题目列表 |
 | `GET` | `/api/v1/problems/{id}` | 公开题目详情 |
 | `GET` | `/api/v1/agent/problems/{id}` | 清洗后的 Agent 题目数据 |
@@ -344,13 +344,34 @@ V1 通常只运行一个 Worker。任务领取使用条件更新，可以避免�
 
 ## 开发与测试
 
+快速检查不需要 Docker：
+
 ```bash
 conda activate minioj
-ruff check src tests
+ruff format --check .
+ruff check .
 pytest
 ```
 
-自动化测试不需要 Docker，也不会执行不可信程序。部署前仍应至少进行一次真实 Docker 提交测试。
+Docker Daemon 和判题镜像可用时，运行隔离的端到端检查：
+
+```bash
+python scripts/smoke_test_stack.py
+python scripts/smoke_test_judge.py
+```
+
+第一个脚本使用临时数据库验证 Custom Run，以及 API → 队列 → Worker → Docker → Feedback 的完整流程；第二个脚本验证 AC、WA、CE、RE、TLE、MLE、OLE 七种 Verdict。两个脚本完成后都会清理临时 Job 和数据，不会使用已配置的生产数据库。
+
+`pytest` 测试套件不需要 Docker，也不会执行不可信程序。两个冒烟测试脚本需要正在运行的 Docker Daemon 和 `minioj-cpp20:latest` 镜像。
+
+## 账号输入限制
+
+- 新用户名：3–10 位，仅允许英文字母 `A–Z`、`a–z`；去除首尾空白。公开注册仍禁止使用保留的管理员名称。已有账号仍可使用原用户名登录。
+- 邮箱：去除首尾空白并转为小写，总长度最多 254 字符，`@` 前最多 64 字符；接受 ASCII 邮箱和带点的域名，支持 `+` 标签，不接受空白、控制字符、显示名称或带引号的地址。
+- 密码：至少 10 字符，UTF-8 编码最多 1024 字节；允许空格、符号和中文，不截断、不去除首尾空白。注册和修改密码必须两次输入一致；登录和校验当前密码也会拦截超长输入。
+- 账号相关 POST 请求体最多 16 KiB，超过返回 HTTP 413；无 `Content-Length` 的分块请求同样受限。代码提交不受此账号请求限制影响。
+- 浏览器输入限制与服务端校验共同生效；数据库查询使用参数绑定，HTML 模板保留自动转义。
+- Settings 生成 API Token 后可点击 **Copy**；若浏览器拒绝剪贴板访问，可手动选择并复制。Token 仍只展示一次。点击 **Delete** 会永久删除 Token 并立即使其失效；以前撤销的 Token 也可以删除。
 
 ## 安全提示
 

@@ -9,10 +9,10 @@
     {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>Username<input name="username" value="{{ username or '' }}" required minlength="3" maxlength="50" autocomplete="username"></label>
-      <label>Email<input type="email" name="email" value="{{ email or '' }}" required autocomplete="email"></label>
-      <label>Password<input type="password" name="password" required minlength="10" autocomplete="new-password"><small>At least 10 characters.</small></label>
-      <label>Confirm password<input type="password" name="password_confirmation" required autocomplete="new-password"></label>
+      <label>Username<input name="username" value="{{ username or '' }}" required minlength="3" maxlength="{{ username_max_length }}" pattern="[A-Za-z]{3,10}" autocomplete="username"><small>3–10 English letters (A–Z or a–z) only.</small></label>
+      <label>Email<input type="email" name="email" maxlength="{{ email_max_length }}" value="{{ email or '' }}" required autocomplete="email"></label>
+      <label>Password<input type="password" name="password" maxlength="{{ password_max_bytes }}" required minlength="10" autocomplete="new-password"><small>At least 10 characters; at most 1024 UTF-8 bytes.</small></label>
+      <label>Confirm password<input type="password" name="password_confirmation" maxlength="{{ password_max_bytes }}" minlength="10" required autocomplete="new-password"></label>
       <button class="button" type="submit">Create account</button>
     </form>
     <p class="auth-switch">Already registered? <a href="{{ base_path }}/login">Log in</a></p>

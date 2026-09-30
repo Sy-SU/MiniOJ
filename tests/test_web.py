@@ -20,7 +20,7 @@ def test_authenticated_web_pages_render_with_real_data(client):
         "/register",
         data={
             "csrf_token": csrf,
-            "username": "web_admin",
+            "username": "webadmin",
             "email": "web@example.com",
             "password": "long-enough-password",
             "password_confirmation": "long-enough-password",
@@ -30,7 +30,7 @@ def test_authenticated_web_pages_render_with_real_data(client):
     assert response.status_code == 303
 
     with SessionLocal() as db:
-        user = db.query(User).filter_by(username="web_admin").one()
+        user = db.query(User).filter_by(username="webadmin").one()
         user.role = "admin"
         problem = Problem(
             id="web-problem",

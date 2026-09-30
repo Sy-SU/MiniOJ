@@ -11,6 +11,7 @@ from minioj.accounts import create_administrator
 from minioj.config import settings
 from minioj.database import init_db
 from minioj.server.api import router as api_router
+from minioj.server.middleware import AccountBodyLimitMiddleware
 from minioj.server.web import router as web_router
 
 
@@ -52,6 +53,7 @@ app.add_middleware(
     https_only=settings.session_https_only,
     max_age=60 * 60 * 24 * 14,
 )
+app.add_middleware(AccountBodyLimitMiddleware)
 app.mount(
     "/static",
     StaticFiles(directory=str(settings.static_dir)),

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from minioj.security import EMAIL_MAX_LENGTH, PASSWORD_MAX_BYTES, USERNAME_MAX_LENGTH
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    email: str
-    password: str
-    password_confirmation: str
+    username: str = Field(min_length=3, max_length=USERNAME_MAX_LENGTH)
+    email: str = Field(max_length=EMAIL_MAX_LENGTH)
+    password: str = Field(min_length=10, max_length=PASSWORD_MAX_BYTES)
+    password_confirmation: str = Field(min_length=10, max_length=PASSWORD_MAX_BYTES)
+
+    @field_validator("username", "email", mode="before")
+    @classmethod
+    def strip_identity(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class TokenCreateRequest(BaseModel):

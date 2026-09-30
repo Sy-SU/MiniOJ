@@ -4,7 +4,7 @@ from sqlalchemy import func, or_, select
 
 from minioj.database import SessionLocal, init_db
 from minioj.models import User
-from minioj.security import USERNAME_RE, hash_password, validate_password
+from minioj.security import USERNAME_RE, hash_password, valid_email, validate_password
 
 
 def create_administrator(
@@ -14,8 +14,8 @@ def create_administrator(
     username = username.strip()
     email = email.strip().lower()
     if not USERNAME_RE.fullmatch(username):
-        raise ValueError("Invalid username.")
-    if "@" not in email or len(email) > 255:
+        raise ValueError("Username must contain 3-10 English letters (A-Z or a-z).")
+    if not valid_email(email):
         raise ValueError("Invalid email.")
     if error := validate_password(password):
         raise ValueError(error)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
@@ -29,6 +29,7 @@ from minioj.security import (
     hash_password,
     is_reserved_username,
     new_submission_id,
+    valid_email,
     validate_password,
 )
 from minioj.server.dependencies import (
@@ -113,14 +114,14 @@ def api_register(payload: RegisterRequest, db: Session = Depends(get_db)) -> dic
     if not USERNAME_RE.fullmatch(username):
         raise HTTPException(
             status_code=422,
-            detail="Username must be 3-50 letters, numbers, dots, dashes, or underscores",
+            detail="Username must contain 3-10 English letters (A-Z or a-z)",
         )
     if is_reserved_username(username):
         raise HTTPException(
             status_code=422,
             detail="This username is reserved for an administrator. Please choose another.",
         )
-    if "@" not in email or len(email) > 255:
+    if not valid_email(email):
         raise HTTPException(status_code=422, detail="A valid email is required")
     if payload.password != payload.password_confirmation:
         raise HTTPException(status_code=422, detail="Passwords do not match")
@@ -210,7 +211,7 @@ def create_token(
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
-def revoke_token(
+def delete_token(
     token_id: str,
     request: Request,
     authorization: str | None = Header(default=None),
@@ -221,9 +222,8 @@ def revoke_token(
     token = db.get(ApiToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status_code=404, detail="Token not found")
-    if token.revoked_at is None:
-        token.revoked_at = datetime.now(UTC)
-        db.commit()
+    db.delete(token)
+    db.commit()
     return Response(status_code=204)
 
 

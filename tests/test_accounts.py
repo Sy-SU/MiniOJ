@@ -19,9 +19,9 @@ def csrf(html: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.parametrize("username", ["admin", "ADMIN", "AdMiN", "site_owner"])
+@pytest.mark.parametrize("username", ["admin", "ADMIN", "AdMiN", "siteowner"])
 def test_reserved_names_rejected_by_web_and_api(client, monkeypatch, username):
-    monkeypatch.setenv("MINIOJ_ADMIN_USERNAME", "site_owner")
+    monkeypatch.setenv("MINIOJ_ADMIN_USERNAME", "siteowner")
     data = {
         "username": username,
         "email": "test@example.com",
@@ -43,7 +43,7 @@ def test_first_public_user_cannot_request_admin_role(client):
     response = client.post(
         "/api/v1/auth/register",
         json={
-            "username": "ordinary_user",
+            "username": "ordinary",
             "email": "ordinary@example.com",
             "password": PASSWORD,
             "password_confirmation": PASSWORD,
@@ -57,7 +57,7 @@ def test_first_public_user_cannot_request_admin_role(client):
         "/login",
         data={
             "csrf_token": csrf(page.text),
-            "identity": "ordinary_user",
+            "identity": "ordinary",
             "password": PASSWORD,
         },
     )

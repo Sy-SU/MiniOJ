@@ -141,7 +141,7 @@ Agent problem responses omit rating, tags, editorials, historical solutions, and
 | `POST` | `/api/v1/auth/register` | Register a user |
 | `GET` | `/api/v1/me` | Current identity |
 | `GET/POST` | `/api/v1/tokens` | List or create own tokens |
-| `DELETE` | `/api/v1/tokens/{id}` | Revoke an own token |
+| `DELETE` | `/api/v1/tokens/{id}` | Delete an own token (immediately invalidates it) |
 | `GET` | `/api/v1/problems` | Public problem list |
 | `GET` | `/api/v1/problems/{id}` | Public problem detail |
 | `GET` | `/api/v1/agent/problems/{id}` | Sanitized agent input |
@@ -163,13 +163,34 @@ Cookie-authenticated API mutations require the `X-CSRF-Token` header used by the
 
 Only one worker should normally be used for V1. Claiming is conditional and safe against two workers selecting the same queued row, but SQLite and host capacity remain the intended scaling boundary.
 
-Run the checks with:
+Run the fast, Docker-free checks with:
 
 ```bash
+conda activate minioj
+ruff format --check .
+ruff check .
 pytest
 ```
 
-The automated suite does not require Docker and does not execute untrusted binaries. Perform one manual end-to-end Docker submission before deployment.
+With Docker and the judge image available, run the isolated end-to-end checks:
+
+```bash
+python scripts/smoke_test_stack.py
+python scripts/smoke_test_judge.py
+```
+
+The first script verifies a custom run plus the complete API → queue → worker → Docker → feedback flow against a temporary database. The second verifies AC, WA, CE, RE, TLE, MLE, and OLE. Both scripts remove their temporary jobs and data when complete; they do not use the configured production database.
+
+The `pytest` suite does not require Docker and does not execute untrusted binaries. The two smoke-test scripts do require a running Docker daemon and the `minioj-cpp20:latest` image.
+
+## Account input limits
+
+- New usernames contain 3–10 ASCII letters (`A–Z`, `a–z`), with surrounding whitespace removed. Administrator names remain reserved for public registration. Existing accounts can still log in with their original usernames.
+- Email addresses are trimmed and lowercased, with at most 254 characters total and 64 before `@`. ASCII addresses with a dotted domain and `+` tags are supported; whitespace, control characters, display names, and quoted addresses are rejected.
+- Passwords require at least 10 characters and at most 1024 UTF-8 bytes. Spaces, symbols, and Unicode are allowed without trimming or truncation. Registration and password changes require matching confirmation; login and current-password verification also reject oversized passwords.
+- Account POST bodies are limited to 16 KiB (HTTP 413), including chunked requests without `Content-Length`. This limit does not apply to code submissions.
+- Browser limits accompany server validation, parameterized database queries, and automatic HTML escaping.
+- Newly generated API tokens have a **Copy** button in Settings, with manual selection available if clipboard access fails. The token is still shown only once. **Delete** permanently removes a token and immediately invalidates it; previously revoked tokens can also be deleted.
 
 ## Security notes
 
