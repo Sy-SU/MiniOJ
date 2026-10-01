@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,13 @@ from pathlib import Path
 
 from minioj.config import settings
 from minioj.judge.checker import outputs_match
+from minioj.judge.contracts import (
+    Verdict,
+    compile_result_payload,
+    testcase_result_payload,
+)
+
+logger = logging.getLogger("minioj.judge")
 
 
 class InfrastructureError(RuntimeError):
@@ -28,7 +36,7 @@ class ProcessResult:
     stdout: str
     stderr: str
     time_ms: int
-    memory_kb: int = 0
+    memory_kb: int | None = None
     timed_out: bool = False
     output_exceeded: bool = False
     oom_killed: bool = False
@@ -39,8 +47,9 @@ class ProcessResult:
 
 
 class DockerJudge:
-    def __init__(self, image: str | None = None) -> None:
+    def __init__(self, image: str | None = None, *, owner: str = "request") -> None:
         self.image = image or settings.docker_image
+        self.owner = owner
 
     def ensure_available(self) -> None:
         if shutil.which("docker") is None:
@@ -64,17 +73,77 @@ class DockerJudge:
             )
 
     @staticmethod
-    def _remove_container(name: str) -> None:
+    def _remove_container(name: str) -> str | None:
         try:
-            subprocess.run(
+            removed = subprocess.run(
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
                 timeout=5,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            detail = f"could not remove container {name}: {exc}"
+            logger.error(detail)
+            return detail
+        if removed.returncode != 0:
+            detail = removed.stderr.strip() or "docker rm returned a failure"
+            message = f"could not remove container {name}: {detail[:1000]}"
+            logger.error(message)
+            return message
+        return None
+
+    def cleanup_owned_containers(self) -> None:
+        try:
+            listed = subprocess.run(
+                [
+                    "docker",
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "--filter",
+                    f"label=minioj.owner={self.owner}",
+                ],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise InfrastructureError(
+                f"Could not list stale judge containers: {exc}"
+            ) from exc
+        if listed.returncode != 0:
+            raise InfrastructureError(
+                "Could not list stale judge containers: "
+                + (listed.stderr.strip() or "docker ps failed")[:2000]
+            )
+        container_ids = listed.stdout.split()
+        if not container_ids:
+            return
+        try:
+            removed = subprocess.run(
+                ["docker", "rm", "--force", *container_ids],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise InfrastructureError(
+                f"Could not remove stale judge containers: {exc}"
+            ) from exc
+        if removed.returncode != 0:
+            raise InfrastructureError(
+                "Could not remove stale judge containers: "
+                + (removed.stderr.strip() or "docker rm failed")[:2000]
+            )
+        logger.warning(
+            "Removed %s stale Docker container(s) owned by %s",
+            len(container_ids),
+            self.owner,
+        )
 
     def _container_command(
         self,
@@ -93,6 +162,8 @@ class DockerJudge:
             "create",
             "--name",
             name,
+            "--label",
+            f"minioj.owner={self.owner}",
             "--interactive",
             "--network",
             "none",
@@ -122,9 +193,9 @@ class DockerJudge:
         ]
 
     @staticmethod
-    def _read_container_memory_peak(container_id: str | None) -> int:
+    def _read_container_memory_peak(container_id: str | None) -> int | None:
         if not container_id:
-            return 0
+            return None
         candidates = (
             Path(
                 f"/sys/fs/cgroup/system.slice/docker-{container_id}.scope/memory.peak"
@@ -136,7 +207,25 @@ class DockerJudge:
                 return max(0, int(path.read_text(encoding="utf-8").strip()) // 1024)
             except (OSError, ValueError):
                 continue
-        return 0
+        return None
+
+    @staticmethod
+    def _higher_memory_peak(current: int | None, observed: int | None) -> int | None:
+        if observed is None:
+            return current
+        return observed if current is None else max(current, observed)
+
+    @staticmethod
+    def _remove_job_directory(job_dir: Path) -> None:
+        try:
+            shutil.rmtree(job_dir)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.exception("Could not remove judge job directory %s", job_dir)
+            raise InfrastructureError(
+                "Could not clean up the judge job directory."
+            ) from exc
 
     def _run_limited(
         self,
@@ -192,9 +281,9 @@ class DockerJudge:
                 ) from exc
             timed_out = False
             output_exceeded = False
-            memory_peak_kb = 0
+            memory_peak_kb: int | None = None
             while process.poll() is None:
-                memory_peak_kb = max(
+                memory_peak_kb = self._higher_memory_peak(
                     memory_peak_kb, self._read_container_memory_peak(container_id)
                 )
                 elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -205,7 +294,7 @@ class DockerJudge:
                     output_exceeded = True
                     break
                 time.sleep(0.002)
-            memory_peak_kb = max(
+            memory_peak_kb = self._higher_memory_peak(
                 memory_peak_kb, self._read_container_memory_peak(container_id)
             )
             infrastructure_error: str | None = None
@@ -256,7 +345,9 @@ class DockerJudge:
                     infrastructure_error = (
                         inspect.stderr.strip() or "Container was not created."
                     )
-            self._remove_container(name)
+            cleanup_error = self._remove_container(name)
+            if cleanup_error and infrastructure_error is None:
+                infrastructure_error = cleanup_error
             stdout_size = stdout_file.tell()
             stderr_size = stderr_file.tell()
             if stdout_size + stderr_size > output_limit:
@@ -294,8 +385,8 @@ class DockerJudge:
                 timed_out=timed_out,
                 output_exceeded=output_exceeded,
                 oom_killed=oom_killed,
-                stdout_truncated=stdout_size > len(stdout.encode()),
-                stderr_truncated=stderr_size > len(stderr.encode()),
+                stdout_truncated=stdout_size > len(stdout_bytes),
+                stderr_truncated=stderr_size > len(stderr_bytes),
                 stdout_valid_utf8=stdout_valid_utf8,
                 stderr_valid_utf8=stderr_valid_utf8,
             )
@@ -308,12 +399,18 @@ class DockerJudge:
         name = "minioj-compile-" + uuid.uuid4().hex
         cmd = self._container_command(
             name,
-            max(memory_mb, 512),
+            max(memory_mb, settings.compile_memory_mb),
             str(job_dir),
             ["g++", "-std=c++20", "-O2", "-pipe", "-o", "main", "main.cpp"],
             read_only_mount=False,
         )
-        result = self._run_limited(cmd, name, "", 30_000, settings.output_limit_bytes)
+        result = self._run_limited(
+            cmd,
+            name,
+            "",
+            settings.compile_time_limit_ms,
+            settings.output_limit_bytes,
+        )
         executable = job_dir / "main"
         if result.exit_code == 0 and not executable.exists():
             raise InfrastructureError(
@@ -339,6 +436,7 @@ class DockerJudge:
             str(job_dir),
             [
                 "timeout",
+                "--preserve-status",
                 "--signal=TERM",
                 "--kill-after=0.2s",
                 timeout_seconds,
@@ -357,7 +455,8 @@ class DockerJudge:
             output_limit or settings.output_limit_bytes,
         )
         if (
-            result.exit_code in {124, 137}
+            result.exit_code in {137, 143}
+            and result.time_ms >= time_limit_ms
             and not result.oom_killed
             and not result.output_exceeded
         ):
@@ -411,7 +510,7 @@ class DockerJudge:
                 "stderr_truncated": result.stderr_truncated,
             }
         finally:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            self._remove_job_directory(job_dir)
 
     @staticmethod
     def _require_build_success(result: ProcessResult, label: str) -> str:
@@ -501,7 +600,7 @@ class DockerJudge:
                 cases.append((generated_input, expected))
             return cases
         finally:
-            shutil.rmtree(root, ignore_errors=True)
+            self._remove_job_directory(root)
 
     def judge(
         self,
@@ -515,17 +614,13 @@ class DockerJudge:
         job_dir = Path(tempfile.mkdtemp(prefix="judge-", dir=settings.jobs_dir))
         try:
             compiled = self.compile(job_dir, source_code, memory_limit_mb)
-            compile_result = {
-                "success": compiled.exit_code == 0 and not compiled.timed_out,
-                "stderr": compiled.stderr,
-                "stderr_truncated": compiled.stderr_truncated,
-                "time_ms": compiled.time_ms,
-            }
+            compile_result = compile_result_payload(compiled)
             if not compile_result["success"]:
                 return compile_result, {
-                    "verdict": "CE",
+                    "verdict": Verdict.CE.value,
                     "summary": "Compilation failed.",
                     "tests": {"total": len(tests), "passed": 0, "failed_test": None},
+                    "test_results": [],
                     "resources": {
                         "time_ms": compiled.time_ms,
                         "memory_kb": compiled.memory_kb,
@@ -534,26 +629,28 @@ class DockerJudge:
             if on_compiled is not None:
                 on_compiled()
             max_time = 0
-            max_memory = 0
+            max_memory: int | None = None
             passed = 0
+            test_results: list[dict[str, object]] = []
             for index, (input_data, expected) in enumerate(tests, start=1):
                 result = self.execute(
                     job_dir, input_data, time_limit_ms, memory_limit_mb
                 )
                 max_time = max(max_time, result.time_ms)
-                max_memory = max(max_memory, result.memory_kb)
-                verdict = None
+                max_memory = self._higher_memory_peak(max_memory, result.memory_kb)
+                verdict: Verdict | None = None
                 if result.timed_out:
-                    verdict = "TLE"
+                    verdict = Verdict.TLE
                 elif result.output_exceeded:
-                    verdict = "OLE"
+                    verdict = Verdict.OLE
                 elif result.oom_killed:
-                    verdict = "MLE"
+                    verdict = Verdict.MLE
                 elif result.exit_code != 0:
-                    verdict = "RE"
+                    verdict = Verdict.RE
                 elif not outputs_match(result.stdout, expected):
-                    verdict = "WA"
+                    verdict = Verdict.WA
                 if verdict:
+                    test_results.append(testcase_result_payload(index, verdict, result))
                     failure = {
                         "test_index": index,
                         "input": input_data,
@@ -562,13 +659,14 @@ class DockerJudge:
                         "stderr": result.stderr,
                     }
                     return compile_result, {
-                        "verdict": verdict,
+                        "verdict": verdict.value,
                         "summary": self._summary(verdict, index),
                         "tests": {
                             "total": len(tests),
                             "passed": passed,
                             "failed_test": index,
                         },
+                        "test_results": test_results,
                         "failure": failure,
                         "resources": {"time_ms": max_time, "memory_kb": max_memory},
                         "limits": {
@@ -578,23 +676,25 @@ class DockerJudge:
                         "stdout_truncated": result.stdout_truncated,
                         "stderr_truncated": result.stderr_truncated,
                     }
+                test_results.append(testcase_result_payload(index, Verdict.AC, result))
                 passed += 1
             return compile_result, {
-                "verdict": "AC",
+                "verdict": Verdict.AC.value,
                 "summary": f"Accepted. Passed {passed} test(s).",
                 "tests": {"total": len(tests), "passed": passed, "failed_test": None},
+                "test_results": test_results,
                 "resources": {"time_ms": max_time, "memory_kb": max_memory},
             }
         finally:
-            shutil.rmtree(job_dir, ignore_errors=True)
+            self._remove_job_directory(job_dir)
 
     @staticmethod
-    def _summary(verdict: str, test_index: int) -> str:
+    def _summary(verdict: Verdict, test_index: int) -> str:
         messages = {
-            "WA": "Wrong answer",
-            "RE": "Runtime error",
-            "TLE": "Time limit exceeded",
-            "MLE": "Memory limit exceeded",
-            "OLE": "Output limit exceeded",
+            Verdict.WA: "Wrong answer",
+            Verdict.RE: "Runtime error",
+            Verdict.TLE: "Time limit exceeded",
+            Verdict.MLE: "Memory limit exceeded",
+            Verdict.OLE: "Output limit exceeded",
         }
         return f"{messages[verdict]} on test {test_index}."

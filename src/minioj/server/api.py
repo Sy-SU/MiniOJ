@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime
+import logging
+import threading
+import time
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from minioj.config import settings
-from minioj.database import get_db
-from minioj.judge import DockerJudge, InfrastructureError
-from minioj.models import ApiToken, Problem, Submission, TestCase, User
+from minioj.database import SessionLocal, get_db
+from minioj.feedback import submission_feedback
+from minioj.judge import CustomRunStatus, SubmissionStatus
+from minioj.models import ApiToken, CustomRun, Problem, Submission, TestCase, User
 from minioj.problems import (
     add_testcase,
     delete_problem,
@@ -47,6 +51,9 @@ from minioj.server.dependencies import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
+logger = logging.getLogger("minioj.api")
+submission_queue_lock = threading.Lock()
+custom_run_queue_lock = threading.Lock()
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -301,16 +308,34 @@ def create_submission(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Problem not found") from exc
     problem = db.get(Problem, payload.problem_id)
-    submission = Submission(
-        user_id=user.id,
-        problem_id=payload.problem_id,
-        problem_revision=problem.revision,
-        language=payload.language,
-        source_code=payload.source_code,
-        status="QUEUED",
+    with submission_queue_lock:
+        queued = db.scalar(
+            select(func.count(Submission.id)).where(
+                Submission.status == SubmissionStatus.QUEUED.value
+            )
+        )
+        if queued >= settings.max_queued_submissions:
+            raise HTTPException(
+                status_code=429,
+                detail="The submission queue is full. Please try again later.",
+                headers={"Retry-After": str(settings.overload_retry_after_seconds)},
+            )
+        submission = Submission(
+            user_id=user.id,
+            problem_id=payload.problem_id,
+            problem_revision=problem.revision,
+            language=payload.language,
+            source_code=payload.source_code,
+            status=SubmissionStatus.QUEUED.value,
+        )
+        db.add(submission)
+        db.commit()
+    logger.info(
+        "Created submission %s for user=%s problem=%s",
+        submission.id,
+        user.id,
+        problem.id,
     )
-    db.add(submission)
-    db.commit()
     return {"submission_id": submission.id, "status": submission.status}
 
 
@@ -335,32 +360,95 @@ def get_agent_feedback(
     submission = db.get(Submission, submission_id)
     if submission is None or (submission.user_id != user.id and user.role != "admin"):
         raise HTTPException(status_code=404, detail="Submission not found")
-    if submission.status != "FINISHED":
-        return {
-            "status": submission.status,
-            "verdict": None,
-            "summary": "Judging is still in progress.",
-        }
-    compile_result = (
-        json.loads(submission.compile_result) if submission.compile_result else None
+    return submission_feedback(submission, settings.feedback_policy)
+
+
+def _queue_custom_run(user_id: int, payload: RunRequest, db: Session) -> int:
+    with custom_run_queue_lock:
+        queued = db.scalar(
+            select(func.count(CustomRun.id)).where(
+                CustomRun.status == CustomRunStatus.QUEUED.value
+            )
+        )
+        if queued >= settings.max_queued_runs:
+            raise HTTPException(
+                status_code=429,
+                detail="The Custom Run queue is full. Please try again later.",
+                headers={"Retry-After": str(settings.overload_retry_after_seconds)},
+            )
+        job = CustomRun(
+            user_id=user_id,
+            language=payload.language,
+            source_code=payload.source_code,
+            stdin=payload.stdin,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    logger.info("Queued Custom Run %s for user=%s", job_id, user_id)
+    return job_id
+
+
+async def _wait_for_custom_run(job_id: int) -> dict:
+    try:
+        deadline = time.monotonic() + settings.custom_run_wait_seconds
+        while time.monotonic() < deadline:
+            with SessionLocal() as db:
+                job = db.get(CustomRun, job_id)
+                if job is None:
+                    break
+                if job.status == CustomRunStatus.FINISHED.value and job.result:
+                    result = json.loads(job.result)
+                    db.delete(job)
+                    db.commit()
+                    return result
+                if job.status in {
+                    CustomRunStatus.FAILED.value,
+                    CustomRunStatus.CANCELLED.value,
+                }:
+                    db.delete(job)
+                    db.commit()
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "verdict": "IE",
+                            "summary": "The judge infrastructure was unavailable.",
+                        },
+                    )
+            await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        _cancel_unclaimed_custom_run(job_id, "The requesting client disconnected.")
+        raise
+
+    _cancel_unclaimed_custom_run(
+        job_id, "The request stopped waiting before a Worker claimed the job."
     )
-    result = (
-        json.loads(submission.judge_result)
-        if submission.judge_result
-        else {
+    raise HTTPException(
+        status_code=503,
+        detail={
             "verdict": "IE",
-            "summary": "Judge result is unavailable.",
-        }
+            "summary": "Custom Run timed out waiting for the judge Worker.",
+        },
     )
-    if submission.verdict == "CE":
-        result["compile"] = compile_result
-    policy = settings.feedback_policy
-    if policy == "verdict_only":
-        return {"verdict": result.get("verdict"), "summary": result.get("summary")}
-    if policy == "diagnostic" and "failure" in result:
-        failure = result["failure"]
-        result["failure"] = {"test_index": failure.get("test_index")}
-    return result
+
+
+def _cancel_unclaimed_custom_run(job_id: int, error: str) -> None:
+    """Cancel a queued job without taking ownership from a running Worker."""
+
+    with SessionLocal() as db:
+        db.execute(
+            update(CustomRun)
+            .where(
+                CustomRun.id == job_id,
+                CustomRun.status == CustomRunStatus.QUEUED.value,
+            )
+            .values(
+                status=CustomRunStatus.CANCELLED.value,
+                error=error,
+                finished_at=datetime.now(UTC),
+            )
+        )
+        db.commit()
 
 
 @router.post("/runs")
@@ -368,23 +456,18 @@ async def custom_run(
     payload: RunRequest,
     request: Request,
     authorization: str | None = Header(default=None),
-    _user: User = Depends(current_user),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
 ) -> dict:
     require_session_csrf(request, authorization)
     if payload.language != "cpp20":
         raise HTTPException(status_code=422, detail="Only cpp20 is supported")
-    if len(payload.code.encode()) > settings.source_limit_bytes:
+    if len(payload.source_code.encode()) > settings.source_limit_bytes:
         raise HTTPException(status_code=413, detail="Source code is too large")
     if len(payload.stdin.encode()) > settings.stdin_limit_bytes:
         raise HTTPException(status_code=413, detail="Input is too large")
-    try:
-        return await run_in_threadpool(
-            DockerJudge().custom_run, payload.code, payload.stdin
-        )
-    except InfrastructureError as exc:
-        raise HTTPException(
-            status_code=503, detail={"verdict": "IE", "summary": str(exc)}
-        )
+    job_id = _queue_custom_run(user.id, payload, db)
+    return await _wait_for_custom_run(job_id)
 
 
 @router.post("/admin/problems", status_code=status.HTTP_201_CREATED)

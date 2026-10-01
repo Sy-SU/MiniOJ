@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from minioj.config import settings
+from minioj.judge import SubmissionStatus, TestcaseBuildStatus, Verdict
 from minioj.models import Problem, Sample, Submission, TestCase, TestcaseBuild, utcnow
 
 logger = logging.getLogger("minioj.problems")
@@ -493,17 +494,21 @@ def delete_problem(db: Session, problem: Problem) -> None:
         # remain valid. A deleted ID cannot silently become a different problem.
         db.execute(
             update(Submission)
-            .where(Submission.problem_id == problem.id, Submission.status == "QUEUED")
+            .where(
+                Submission.problem_id == problem.id,
+                Submission.status == SubmissionStatus.QUEUED.value,
+            )
             .values(
-                status="FINISHED",
-                verdict="IE",
+                status=SubmissionStatus.FINISHED.value,
+                verdict=Verdict.IE.value,
                 finished_at=utcnow(),
                 judge_result=json.dumps(
                     {
-                        "verdict": "IE",
+                        "verdict": Verdict.IE.value,
                         "summary": "This problem has been deleted before judging started.",
                         "tests": {"total": 0, "passed": 0, "failed_test": None},
-                        "resources": {"time_ms": 0, "memory_kb": 0},
+                        "test_results": [],
+                        "resources": {"time_ms": 0, "memory_kb": None},
                     }
                 ),
             )
@@ -512,10 +517,15 @@ def delete_problem(db: Session, problem: Problem) -> None:
             update(TestcaseBuild)
             .where(
                 TestcaseBuild.problem_id == problem.id,
-                TestcaseBuild.status.in_(["QUEUED", "RUNNING"]),
+                TestcaseBuild.status.in_(
+                    [
+                        TestcaseBuildStatus.QUEUED.value,
+                        TestcaseBuildStatus.RUNNING.value,
+                    ]
+                ),
             )
             .values(
-                status="FAILED",
+                status=TestcaseBuildStatus.FAILED.value,
                 error="This problem has been deleted; testcase build cancelled.",
                 finished_at=utcnow(),
             )

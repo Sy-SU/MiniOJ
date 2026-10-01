@@ -45,9 +45,19 @@ def test_server_accepts_non_placeholder_secret_with_minimum_length():
     "field",
     [
         "testcase_file_limit_bytes",
+        "output_limit_bytes",
+        "source_limit_bytes",
+        "stdin_limit_bytes",
+        "compile_time_limit_ms",
+        "compile_memory_mb",
         "testcase_build_time_limit_ms",
         "testcase_build_memory_mb",
         "generator_max_cases",
+        "max_queued_submissions",
+        "max_queued_runs",
+        "custom_run_wait_seconds",
+        "overload_retry_after_seconds",
+        "token_default_days",
     ],
 )
 def test_server_rejects_non_positive_testcase_build_limits(field):
@@ -64,6 +74,16 @@ def test_secret_validation_error_does_not_disclose_secret():
         Settings(secret_key=secret).validate_server()
 
     assert secret not in str(error.value)
+
+
+def test_server_rejects_unknown_feedback_policy():
+    with pytest.raises(RuntimeError, match="MINIOJ_FEEDBACK_POLICY"):
+        Settings(secret_key="a" * 32, feedback_policy="everything").validate_server()
+
+
+def test_worker_rejects_empty_owner_label():
+    with pytest.raises(RuntimeError, match="MINIOJ_WORKER_OWNER"):
+        Settings(worker_owner=" ").validate_worker()
 
 
 def test_server_import_rejects_example_secret_without_disclosing_it():

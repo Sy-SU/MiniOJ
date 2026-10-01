@@ -3,32 +3,41 @@
 {% block content %}
 <div class="page-heading">
   <div><p class="eyebrow mono">{{ submission.id }}</p><h1>Submission result</h1></div>
-  <span class="verdict verdict-large verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span>
+  <span id="submission-verdict" class="verdict verdict-large verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span>
 </div>
 {% if submission.problem_warning %}<div class="alert alert-warning" role="alert">{{ submission.problem_warning }}</div>{% endif %}
 <div class="stats-grid">
   <div class="stat"><span>Problem</span><strong><a href="{{ base_path }}/problems/{{ submission.problem_id }}">{{ submission.problem.title }}</a></strong></div>
   <div class="stat"><span>Language</span><strong>{{ submission.language }}</strong></div>
-  <div class="stat"><span>Time</span><strong>{{ judge_result.resources.time_ms if judge_result and judge_result.resources else '—' }} ms</strong></div>
-  <div class="stat"><span>Memory</span><strong>{{ judge_result.resources.memory_kb if judge_result and judge_result.resources else '—' }} KB</strong></div>
+  <div class="stat"><span>Time</span><strong>{% if judge_result and judge_result.resources %}{{ judge_result.resources.time_ms }} ms{% else %}—{% endif %}</strong></div>
+  <div class="stat"><span>Memory</span><strong>{% if judge_result and judge_result.resources and judge_result.resources.memory_kb is not none %}{{ judge_result.resources.memory_kb }} KB{% else %}—{% endif %}</strong></div>
 </div>
-{% if judge_result %}
+{% if judge_result and submission.status == 'FINISHED' %}
 <section class="panel detail-section">
   <h2>{{ judge_result.summary }}</h2>
   {% if judge_result.tests %}<p class="muted">Passed {{ judge_result.tests.passed }} of {{ judge_result.tests.total }} test(s).</p>{% endif %}
   {% if judge_result.failure %}
+    <p class="muted">First failed test: {{ judge_result.failure.test_index }}</p>
+    {% if judge_result.failure.input is defined %}
     <div class="failure-grid">
       <div><h3>Input</h3><pre>{{ judge_result.failure.input }}</pre></div>
       <div><h3>Expected</h3><pre>{{ judge_result.failure.expected }}</pre></div>
       <div><h3>Actual</h3><pre>{{ judge_result.failure.actual }}</pre></div>
     </div>
+    {% endif %}
   {% endif %}
 </section>
 {% elif submission.status != 'FINISHED' %}
-<div class="alert alert-info">This submission is {{ submission.status|lower }}. Refresh after the worker finishes it.</div>
+<div id="submission-progress" class="alert alert-info" aria-live="polite">This submission is {{ submission.status|lower }}. Waiting for the Worker…</div>
 {% endif %}
 {% if compile_result and not compile_result.success %}
-<section class="panel detail-section"><h2>Compile log</h2><pre class="log">{{ compile_result.stderr }}</pre></section>
+<section class="panel detail-section"><h2>Compile log</h2>{% if compile_result.stderr is defined %}<pre class="log">{{ compile_result.stderr }}</pre>{% else %}<p class="muted">Compile diagnostics are hidden by the active Feedback Mode.</p>{% endif %}{% if compile_result.output_truncated %}<div class="alert alert-warning">Compile output was truncated at the configured byte limit.</div>{% endif %}</section>
 {% endif %}
 <section class="panel detail-section"><h2>Source code</h2><pre class="source-view"><code>{{ submission.source_code }}</code></pre></section>
+{% endblock %}
+{% block scripts %}
+{% if submission.status != 'FINISHED' %}
+<script>window.MINIOJ_SUBMISSION = {basePath: {{ base_path|tojson }}, submissionId: {{ submission.id }}};</script>
+<script src="{{ url_for('static', path='/submission.js') }}"></script>
+{% endif %}
 {% endblock %}

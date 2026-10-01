@@ -22,7 +22,7 @@
     {% if problem.notes %}<section><h2>Notes</h2><div class="prose markdown-body">{{ problem.notes|markdown }}</div></section>{% endif %}
   </article>
   <aside class="workspace panel">
-    <div class="workspace-head"><div><span class="label">Language</span><strong>C++20</strong></div><span class="status-dot">Ready</span></div>
+    <div class="workspace-head"><div><span class="label">Language</span><strong>C++20</strong></div><span class="status-dot" id="workspace-status">Ready</span></div>
     {% if current_user %}
       <textarea id="code-editor" class="code-editor" spellcheck="false" aria-label="C++20 source code">#include &lt;bits/stdc++.h&gt;
 using namespace std;
@@ -33,10 +33,17 @@ int main() {
 
     return 0;
 }</textarea>
+      {% if problem.samples %}
+      <label class="label" for="sample-select">Public sample</label>
+      <select id="sample-select" class="sample-select" aria-label="Public sample">
+        {% for sample in problem.samples %}<option value="{{ loop.index0 }}">Sample {{ loop.index }}</option>{% endfor %}
+      </select>
+      {% endif %}
       <label class="label" for="custom-input">Custom input</label>
-      <textarea id="custom-input" class="custom-input" spellcheck="false">{% if problem.samples %}{{ problem.samples[0].input }}{% endif %}</textarea>
+      <textarea id="custom-input" class="custom-input" spellcheck="false"></textarea>
       <div class="button-row compact">
-        <button class="button button-secondary" id="run-button" type="button">Run code</button>
+        {% if problem.samples %}<button class="button button-secondary" id="run-sample-button" type="button">Run sample</button>{% endif %}
+        <button class="button button-secondary" id="custom-test-button" type="button">Custom test</button>
         <button class="button" id="submit-button" type="button">Submit</button>
       </div>
       <div id="run-result" class="result-box hidden" aria-live="polite"></div>
@@ -54,7 +61,8 @@ int main() {
 window.MINIOJ = {
   basePath: {{ base_path|tojson }},
   problemId: {{ problem.id|tojson }},
-  csrfToken: {{ csrf_token|tojson }}
+  csrfToken: {{ csrf_token|tojson }},
+  samples: {{ problem.samples|map(attribute='input')|list|tojson }}.map((input, index) => ({input, output: {{ problem.samples|map(attribute='output')|list|tojson }}[index]}))
 };
 </script>
 <script src="{{ url_for('static', path='/problem.js') }}"></script>

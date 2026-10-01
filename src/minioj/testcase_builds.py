@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from minioj.config import settings
+from minioj.judge import TestcaseBuildStatus
 from minioj.models import Problem, TestcaseBuild, User
 from minioj.problems import ensure_problem_mutable, mark_problem_changed
 
@@ -77,7 +78,7 @@ def _new_build(
         generator_source=generator_source,
         case_count=case_count,
         base_seed=base_seed,
-        status="QUEUED",
+        status=TestcaseBuildStatus.QUEUED.value,
     )
 
 

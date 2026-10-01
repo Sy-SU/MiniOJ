@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 SOURCE = """#include <iostream>
@@ -32,7 +34,7 @@ def main() -> None:
         from minioj.problems import add_testcase
         from minioj.security import create_api_token, hash_password
         from minioj.server.main import app
-        from minioj.worker.main import run_worker
+        from minioj.worker import main as worker_main
 
         init_db()
         token_id, raw_token, token_hash, expires_at = create_api_token()
@@ -69,48 +71,72 @@ def main() -> None:
             add_testcase(db, problem, "hidden", "20 22\n", "42\n")
 
         headers = {"Authorization": f"Bearer {raw_token}"}
-        with TestClient(app) as client:
-            run_result = require_status(
-                client.post(
-                    "/api/v1/runs",
-                    headers=headers,
-                    json={"code": SOURCE, "language": "cpp20", "stdin": "7 8\n"},
-                ),
-                200,
-                "custom run",
-            )
-            if run_result["status"] != "OK" or run_result["stdout"] != "15\n":
-                raise RuntimeError(f"Unexpected custom-run result: {run_result}")
+        worker_main.running = True
+        worker = threading.Thread(
+            target=worker_main.run_worker, args=(0.05,), daemon=True
+        )
+        worker.start()
+        try:
+            with TestClient(app) as client:
+                run_result = require_status(
+                    client.post(
+                        "/api/v1/runs",
+                        headers=headers,
+                        json={
+                            "source_code": SOURCE,
+                            "language": "cpp20",
+                            "stdin": "7 8\n",
+                        },
+                    ),
+                    200,
+                    "custom run",
+                )
+                if run_result["status"] != "OK" or run_result["stdout"] != "15\n":
+                    raise RuntimeError(f"Unexpected custom-run result: {run_result}")
 
-            queued = require_status(
-                client.post(
-                    "/api/v1/submissions",
-                    headers=headers,
-                    json={
-                        "problem_id": "smoke-sum",
-                        "language": "cpp20",
-                        "source_code": SOURCE,
-                    },
-                ),
-                202,
-                "submission creation",
-            )
-            submission_id = queued["submission_id"]
-            run_worker(once=True)
-
-            submission = require_status(
-                client.get(f"/api/v1/submissions/{submission_id}", headers=headers),
-                200,
-                "submission lookup",
-            )
-            feedback = require_status(
-                client.get(
-                    f"/api/v1/agent/submissions/{submission_id}/feedback",
-                    headers=headers,
-                ),
-                200,
-                "agent feedback lookup",
-            )
+                queued = require_status(
+                    client.post(
+                        "/api/v1/submissions",
+                        headers=headers,
+                        json={
+                            "problem_id": "smoke-sum",
+                            "language": "cpp20",
+                            "source_code": SOURCE,
+                        },
+                    ),
+                    202,
+                    "submission creation",
+                )
+                submission_id = queued["submission_id"]
+                deadline = time.monotonic() + 20
+                while True:
+                    submission = require_status(
+                        client.get(
+                            f"/api/v1/submissions/{submission_id}", headers=headers
+                        ),
+                        200,
+                        "submission lookup",
+                    )
+                    if submission["status"] == "FINISHED":
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "Submission did not finish within 20 seconds"
+                        )
+                    time.sleep(0.05)
+                feedback = require_status(
+                    client.get(
+                        f"/api/v1/agent/submissions/{submission_id}/feedback",
+                        headers=headers,
+                    ),
+                    200,
+                    "agent feedback lookup",
+                )
+        finally:
+            worker_main.running = False
+            worker.join(timeout=5)
+            if worker.is_alive():
+                raise RuntimeError("Worker did not stop after the stack smoke test")
 
         if submission["status"] != "FINISHED" or submission["verdict"] != "AC":
             raise RuntimeError(f"Unexpected submission result: {submission}")

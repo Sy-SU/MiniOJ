@@ -16,3 +16,5 @@ data/jobs/*
 !data/jobs/.gitkeep
 data/problems/*/tests/*.in
 data/problems/*/tests/*.out
+
+store/

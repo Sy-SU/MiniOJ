@@ -19,6 +19,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from minioj.database import Base
+from minioj.judge.contracts import (
+    CustomRunStatus,
+    SubmissionStatus,
+    TestcaseBuildStatus,
+)
 
 
 def utcnow() -> datetime:
@@ -48,6 +53,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     submissions: Mapped[list[Submission]] = relationship(back_populates="user")
+    custom_runs: Mapped[list[CustomRun]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class ApiToken(Base):
@@ -173,7 +181,9 @@ class TestcaseBuild(Base):
     generator_source: Mapped[str | None] = mapped_column(Text)
     case_count: Mapped[int] = mapped_column(Integer, default=1)
     base_seed: Mapped[int] = mapped_column(Integer, default=1)
-    status: Mapped[str] = mapped_column(String(16), default="QUEUED", index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=TestcaseBuildStatus.QUEUED.value, index=True
+    )
     error: Mapped[str | None] = mapped_column(Text)
     created_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -195,7 +205,9 @@ class Submission(Base):
     problem_revision: Mapped[int] = mapped_column(Integer, server_default="1")
     language: Mapped[str] = mapped_column(String(20), default="cpp20")
     source_code: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(16), default="QUEUED", index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=SubmissionStatus.QUEUED.value, index=True
+    )
     verdict: Mapped[str | None] = mapped_column(String(8), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
@@ -218,6 +230,33 @@ class Submission(Base):
                 "Its result may not match the current statement or testcases."
             )
         return None
+
+
+class CustomRun(Base):
+    """Short-lived, Worker-owned execution job for synchronous Custom Run HTTP calls."""
+
+    __tablename__ = "custom_runs"
+    __table_args__: ClassVar[dict[str, bool]] = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    language: Mapped[str] = mapped_column(String(20), default="cpp20")
+    source_code: Mapped[str] = mapped_column(Text)
+    stdin: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(
+        String(16), default=CustomRunStatus.QUEUED.value, index=True
+    )
+    result: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="custom_runs")
 
 
 @event.listens_for(Submission, "before_insert")

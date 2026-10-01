@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -12,6 +10,7 @@ from starlette.formparsers import MultiPartException
 
 from minioj.config import settings
 from minioj.database import get_db
+from minioj.feedback import submission_feedback
 from minioj.models import ApiToken, Problem, Submission, TestcaseBuild, User
 from minioj.problems import (
     add_testcase,
@@ -313,12 +312,8 @@ def submission_detail(
     submission = db.get(Submission, submission_id)
     if submission is None or (submission.user_id != user.id and user.role != "admin"):
         raise HTTPException(status_code=404, detail="Submission not found")
-    compile_result = (
-        json.loads(submission.compile_result) if submission.compile_result else None
-    )
-    judge_result = (
-        json.loads(submission.judge_result) if submission.judge_result else None
-    )
+    judge_result = submission_feedback(submission, settings.feedback_policy)
+    compile_result = judge_result.get("compile")
     return templates.TemplateResponse(
         request=request,
         name="submission_detail.html",
@@ -328,6 +323,7 @@ def submission_detail(
             submission=submission,
             compile_result=compile_result,
             judge_result=judge_result,
+            feedback_policy=settings.feedback_policy,
         ),
     )
 

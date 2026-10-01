@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from dataclasses import dataclass
 
+from minioj.config import settings
 from minioj.judge import DockerJudge
 
 
@@ -63,16 +66,47 @@ int main() {
         "OLE",
         """#include <iostream>
 int main() { for (;;) std::cout << \"0123456789abcdef\\n\"; }
+        """,
+    ),
+    Case("user-exit-124", "RE", "int main() { return 124; }\n"),
+    Case("user-exit-137", "RE", "int main() { return 137; }\n"),
+    Case(
+        "short-output",
+        "OLE",
+        """#include <iostream>
+#include <string>
+int main() { std::cout << std::string(2 * 1024 * 1024, 'x'); }
 """,
     ),
 ]
 
 
+def _owned_containers(owner: str) -> list[str]:
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--all",
+            "--quiet",
+            "--filter",
+            f"label=minioj.owner={owner}",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )
+    return result.stdout.split()
+
+
 def main() -> None:
-    judge = DockerJudge()
+    owner = f"judge-smoke-{os.getpid()}"
+    judge = DockerJudge(owner=owner)
+    judge.ensure_available()
+    before_jobs = {path.name for path in settings.jobs_dir.glob("judge-*")}
     failures: list[str] = []
     for case in CASES:
-        _, result = judge.judge(
+        compile_result, result = judge.judge(
             case.source,
             [(case.stdin, case.stdout)],
             case.time_ms,
@@ -89,9 +123,58 @@ def main() -> None:
             failures.append(
                 f"{case.name}: expected {case.expected}, received {verdict}"
             )
+        required_compile_fields = {
+            "success",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "time_ms",
+            "memory_kb",
+            "timed_out",
+            "output_exceeded",
+            "oom_killed",
+            "stdout_truncated",
+            "stderr_truncated",
+            "output_truncated",
+        }
+        if set(compile_result) != required_compile_fields:
+            failures.append(f"{case.name}: incomplete compile result")
+        if verdict != "CE" and not result.get("test_results"):
+            failures.append(f"{case.name}: missing per-test result metadata")
+    original_output_limit = settings.output_limit_bytes
+    object.__setattr__(settings, "output_limit_bytes", 512)
+    try:
+        compile_result, result = judge.judge(
+            '#error "' + ("x" * 5000) + '"\n',
+            [("", "")],
+            1000,
+            128,
+        )
+    finally:
+        object.__setattr__(settings, "output_limit_bytes", original_output_limit)
+    print(
+        "compile-output  "
+        f"expected=CE  actual={result['verdict']:3} "
+        f"truncated={compile_result['output_truncated']}"
+    )
+    if result["verdict"] != "CE":
+        failures.append("compile-output: expected CE")
+    if not compile_result["output_exceeded"]:
+        failures.append("compile-output: output limit was not detected")
+    if not compile_result["output_truncated"]:
+        failures.append("compile-output: truncation was not recorded")
+    leftovers = _owned_containers(owner)
+    if leftovers:
+        failures.append(f"leftover containers: {', '.join(leftovers)}")
+        judge.cleanup_owned_containers()
+    after_jobs = {path.name for path in settings.jobs_dir.glob("judge-*")}
+    if after_jobs != before_jobs:
+        failures.append(
+            "leftover job directories: " + ", ".join(sorted(after_jobs - before_jobs))
+        )
     if failures:
         raise SystemExit("Judge smoke test failed:\n" + "\n".join(failures))
-    print("All Docker judge verdicts passed.")
+    print("All Docker judge verdicts and exit-code boundaries passed.")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
+import threading
+import time
+from dataclasses import replace
 
+from minioj.config import settings
 from minioj.database import SessionLocal
-from minioj.models import ApiToken, Problem, Submission, User
+from minioj.models import ApiToken, CustomRun, Problem, Submission, User
 from minioj.security import create_api_token, hash_password
 
 
@@ -141,3 +146,173 @@ def test_anonymous_mutation_is_rejected(client):
         },
     )
     assert response.status_code == 401
+
+
+def _process_one_custom_run() -> None:
+    from minioj.worker.main import claim_next_custom_run, process_custom_run
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        job_id = claim_next_custom_run()
+        if job_id is not None:
+            process_custom_run(job_id)
+            return
+        time.sleep(0.01)
+    raise AssertionError("Custom Run was not queued")
+
+
+def test_custom_run_accepts_source_code_and_legacy_code(client, monkeypatch):
+    _, token = add_user("runner")
+    monkeypatch.setattr(
+        "minioj.worker.main.DockerJudge.custom_run",
+        lambda _judge, source, stdin: {
+            "status": "OK",
+            "exit_code": 0,
+            "stdout": source + stdin,
+            "stderr": "",
+            "time_ms": 1,
+            "memory_kb": None,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "output_truncated": False,
+        },
+    )
+
+    for field in ("source_code", "code"):
+        worker = threading.Thread(target=_process_one_custom_run)
+        worker.start()
+        response = client.post(
+            "/api/v1/runs",
+            headers=auth(token),
+            json={field: "source", "stdin": "input"},
+        )
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        assert response.status_code == 200
+        assert response.json()["stdout"] == "sourceinput"
+
+    with SessionLocal() as db:
+        assert db.query(CustomRun).count() == 0
+
+
+def test_custom_run_rejects_conflicting_source_fields(client):
+    _, token = add_user("runner")
+    response = client.post(
+        "/api/v1/runs",
+        headers=auth(token),
+        json={"source_code": "one", "code": "two"},
+    )
+    assert response.status_code == 422
+
+
+def test_queue_capacity_returns_retry_after(client, monkeypatch):
+    admin, _ = add_user("admin", "admin")
+    user, token = add_user("queued")
+    add_problem(admin.id)
+    api_settings = replace(
+        settings,
+        max_queued_submissions=1,
+        max_queued_runs=1,
+        overload_retry_after_seconds=7,
+    )
+    monkeypatch.setattr("minioj.server.api.settings", api_settings)
+    with SessionLocal() as db:
+        db.add(
+            Submission(
+                user_id=user.id,
+                problem_id="sum-two",
+                source_code="queued",
+                status="QUEUED",
+            )
+        )
+        db.add(CustomRun(user_id=user.id, source_code="queued", status="QUEUED"))
+        db.commit()
+
+    submission = client.post(
+        "/api/v1/submissions",
+        headers=auth(token),
+        json={"problem_id": "sum-two", "source_code": "new"},
+    )
+    custom_run = client.post(
+        "/api/v1/runs", headers=auth(token), json={"source_code": "new"}
+    )
+    for response in (submission, custom_run):
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == "7"
+
+
+def test_custom_run_wait_timeout_cancels_unclaimed_job(client, monkeypatch):
+    _, token = add_user("runner")
+    monkeypatch.setattr(
+        "minioj.server.api.settings",
+        replace(settings, custom_run_wait_seconds=0.02),
+    )
+    response = client.post(
+        "/api/v1/runs", headers=auth(token), json={"source_code": "source"}
+    )
+    assert response.status_code == 503
+    assert "timed out" in response.json()["detail"]["summary"]
+    with SessionLocal() as db:
+        job = db.query(CustomRun).one()
+        assert job.status == "CANCELLED"
+
+
+def test_feedback_policy_is_shared_by_agent_and_web(client, monkeypatch):
+    admin, _ = add_user("admin", "admin")
+    _, token = add_user("feedback")
+    add_problem(admin.id)
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(username="feedback").one()
+        submission = Submission(
+            user_id=user.id,
+            problem_id="sum-two",
+            source_code="source",
+            status="FINISHED",
+            verdict="WA",
+            compile_result=json.dumps({"success": True}),
+            judge_result=json.dumps(
+                {
+                    "verdict": "WA",
+                    "summary": "Wrong answer.",
+                    "tests": {"total": 1, "passed": 0, "failed_test": 1},
+                    "failure": {
+                        "test_index": 1,
+                        "input": "secret input",
+                        "expected": "secret expected",
+                        "actual": "actual",
+                    },
+                    "resources": {"time_ms": 1, "memory_kb": None},
+                }
+            ),
+        )
+        db.add(submission)
+        db.commit()
+        submission_id = submission.id
+
+    policy_settings = replace(settings, feedback_policy="diagnostic")
+    monkeypatch.setattr("minioj.server.api.settings", policy_settings)
+    monkeypatch.setattr("minioj.server.web.settings", policy_settings)
+    feedback = client.get(
+        f"/api/v1/agent/submissions/{submission_id}/feedback", headers=auth(token)
+    )
+    assert feedback.json()["failure"] == {"test_index": 1}
+
+    # Establish the same user session for the browser route.
+    login = client.get("/login")
+    csrf = login.cookies.get("minioj_session")
+    assert csrf is not None
+    match = re.search(r'name="csrf_token" value="([^"]+)"', login.text)
+    assert match
+    response = client.post(
+        "/login",
+        data={
+            "csrf_token": match.group(1),
+            "identity": "feedback",
+            "password": "correct-horse-battery",
+        },
+    )
+    assert response.status_code == 200
+    page = client.get(f"/submissions/{submission_id}")
+    assert "First failed test: 1" in page.text
+    assert "secret input" not in page.text
+    assert "secret expected" not in page.text

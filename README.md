@@ -10,7 +10,7 @@ MiniOJ is a small multi-user online judge designed for both browser users and co
 - `user` and `admin` roles with server-side authorization
 - One-time-display Agent API tokens; only SHA-256 token digests are stored
 - Problem statements, public samples, and file-backed hidden testcases
-- Browser editor, custom runs, submissions, histories, and detailed results
+- Browser editor with separate Run Sample, Custom Test, and Submit actions; histories and automatically updating results
 - Versioned REST API with agent-safe problem data and structured judge feedback
 - A separate database-polling judge worker
 - Docker restrictions for network, CPU, memory, PIDs, capabilities, user, filesystem, time, and output
@@ -24,7 +24,7 @@ V1 intentionally has no contests, rankings, OAuth, special judges, interactive p
 Browser ── session cookie ─┐
                           ├── FastAPI server ── SQLite
 Agent ─── Bearer token ───┘          │
-                                     │ QUEUED submissions
+                                     │ QUEUED run/build/submission jobs
                               independent worker
                                      │
                               restricted Docker
@@ -32,7 +32,7 @@ Agent ─── Bearer token ───┘          │
                                   C++20 code
 ```
 
-The server never executes user binaries. The worker invokes Docker, and only the per-job directory is mounted into a user-code container. The Docker socket, database, WSL home, and complete testcase directory are not mounted into that container.
+The server never executes user binaries. Custom Runs are queued internally while the HTTP request waits, so the same independent worker invokes Docker for every untrusted execution. Only the per-job directory is mounted into a user-code container. The Docker socket, database, WSL home, and complete testcase directory are not mounted into that container.
 
 ## WSL Ubuntu setup
 
@@ -96,7 +96,20 @@ set +a
 minioj-worker
 ```
 
-The worker stays in the foreground and polls for submissions every second. `Worker ready` followed by `No queued submissions; waiting for new submissions.` means it is ready and idle. Keep this terminal open while submitting code in the browser; press `Ctrl+C` to stop. Use `minioj-worker --once` to process queued submissions until the queue is empty and then exit. Startup logs show database initialization and the Docker judge image check.
+The worker stays in the foreground and polls Custom Runs, testcase builds, and submissions every second. `Worker ready` followed by `No queued work; waiting for Custom Runs, testcase builds, or submissions.` means it is ready and idle. Keep this terminal open while running or submitting code in the browser; press `Ctrl+C` to stop. Use `minioj-worker --once` to drain all three queues and exit. Startup takes an exclusive lock in `MINIOJ_JOB_DIR`, finalizes interrupted work without re-executing it, removes Worker-owned stale containers/job directories, and checks the Docker judge image. A second Worker using the same job directory is rejected.
+
+For a persistent WSL user service, the supplied unit assumes this repository is at `%h/github-repos/MiniOJ` and Conda is at `%h/miniconda3`. Edit those two paths if needed, then install it:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/minioj-worker.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now minioj-worker
+systemctl --user status minioj-worker
+journalctl --user -u minioj-worker -f
+```
+
+The unit loads the repository `.env`, restarts after failures, and uses the same database/data paths as foreground operation. WSL must have systemd enabled; `sudo loginctl enable-linger "$USER"` allows the user service to start without an interactive login. Docker must already be running and the user must have Docker access.
 
 Open <http://localhost:8000>. FastAPI's interactive API documentation is at <http://localhost:8000/docs>.
 
@@ -106,7 +119,7 @@ For the Tailscale-facing Nginx deployment, create `.env` from `.env.example`, se
 docker compose up -d --build
 ```
 
-Open <http://100.95.57.121/minioj/>. Nginx is the only published service; it proxies the `/minioj/` prefix to the internal FastAPI container. Set `MINIOJ_HTTP_BIND` in `.env` if the host address changes.
+Open <http://100.95.57.121/minioj/>. Nginx is the only published service; it proxies the `/minioj/` prefix to the internal FastAPI container. Set `MINIOJ_HTTP_BIND` if the host address changes and `MINIOJ_HTTP_PORT` if port 80 is unavailable. `MINIOJ_DATABASE_DIR` and `MINIOJ_DATA_HOST_DIR` can override the host bind-mount directories for isolated deployments; point the host Worker at those same paths.
 
 Run the judge worker directly in WSL so Docker bind mounts resolve to the same host paths. Production deployments should give the worker its own tightly controlled Docker daemon rather than mounting a general-purpose daemon into the web server.
 
@@ -154,6 +167,11 @@ export OJ_TOKEN='oj_replace_me'
 curl -H "Authorization: Bearer $OJ_TOKEN" \
   http://localhost:8000/api/v1/agent/problems/two-sum
 
+curl -X POST http://localhost:8000/api/v1/runs \
+  -H "Authorization: Bearer $OJ_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"language":"cpp20","source_code":"int main(){return 0;}","stdin":""}'
+
 curl -X POST http://localhost:8000/api/v1/submissions \
   -H "Authorization: Bearer $OJ_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -179,12 +197,14 @@ Agent problem responses omit rating, tags, editorials, historical solutions, and
 | `GET` | `/api/v1/problems` | Public problem list |
 | `GET` | `/api/v1/problems/{id}` | Public problem detail |
 | `GET` | `/api/v1/agent/problems/{id}` | Sanitized agent input |
-| `POST` | `/api/v1/runs` | Synchronous custom run |
+| `POST` | `/api/v1/runs` | Synchronous response backed by the Worker Custom Run queue |
 | `POST` | `/api/v1/submissions` | Queue a submission (`202`) |
 | `GET` | `/api/v1/submissions/{id}` | Stable status/result fields |
 | `GET` | `/api/v1/agent/submissions/{id}/feedback` | Structured diagnostic feedback |
 
 Cookie-authenticated API mutations require the `X-CSRF-Token` header used by the bundled browser UI. Bearer-token requests do not.
+
+Custom Run accepts `source_code`; the legacy `code` name remains compatible when only one is sent (or both values match). A full submission or Custom Run queue returns HTTP 429 with `Retry-After`; judge infrastructure failures and Custom Run Worker-wait timeouts return a sanitized HTTP 503. Successful submissions remain HTTP 202. No public Custom Run polling route was added.
 
 ## Data and operations
 
@@ -196,12 +216,16 @@ Cookie-authenticated API mutations require the `X-CSRF-Token` header used by the
 - Maximum cases in one generator job: `MINIOJ_GENERATOR_MAX_CASES` (default 50)
 - Maximum source size: `MINIOJ_SOURCE_LIMIT_BYTES` (default 262144 bytes)
 - Maximum Custom Run input size: `MINIOJ_STDIN_LIMIT_BYTES` (default 262144 bytes)
+- Compilation limit: `MINIOJ_COMPILE_TIME_LIMIT_MS` (default 30000 ms) and `MINIOJ_COMPILE_MEMORY_MB` (default 512 MiB, or the higher problem memory limit)
 - Combined stdout/stderr limit: `MINIOJ_OUTPUT_LIMIT_BYTES` (default 1048576 bytes)
 - Default token lifetime: `MINIOJ_TOKEN_DEFAULT_DAYS` (default 90 days)
+- Queued submission / Custom Run limits: `MINIOJ_MAX_QUEUED_SUBMISSIONS` (1000) and `MINIOJ_MAX_QUEUED_RUNS` (16)
+- Custom Run Worker wait / overload retry hint: `MINIOJ_CUSTOM_RUN_WAIT_SECONDS` (45) and `MINIOJ_OVERLOAD_RETRY_AFTER_SECONDS` (2)
+- Worker Docker cleanup label: `MINIOJ_WORKER_OWNER` (default `worker`; make it unique for concurrent isolated MiniOJ instances)
 
-`MINIOJ_JOB_DIR` is independently configurable so ephemeral compiler and runtime files can live outside testcase storage. Omitting it preserves the existing `data/jobs` layout. For a host-run Worker, `/tmp/minioj/jobs` is a suitable non-persistent choice. The directory used for a Docker bind mount must be visible to the Docker daemon; the current Compose Custom Run limitation described in [the architecture document](docs/architecture.md) still applies.
+`MINIOJ_JOB_DIR` is independently configurable so ephemeral compiler and runtime files can live outside testcase storage. Omitting it preserves the existing `data/jobs` layout. For a host-run Worker, `/tmp/minioj/jobs` is a suitable non-persistent choice. The directory used for a Docker bind mount must be visible to the Docker daemon. In Compose, the Server queues Custom Runs through SQLite and never needs Docker access; the host Worker must share the mounted database and data directories.
 
-Only one worker should normally be used for V1. Submission and testcase-build claims use conditional updates, but SQLite and host capacity remain the intended scaling boundary. A Worker restart currently leaves already-RUNNING work for manual diagnosis; automatic recovery is still pending.
+V1 allows one Worker per job directory. Custom Run, submission, and testcase-build claims use conditional updates, and the exclusive lock prevents a second local Worker from racing the active one. On restart, interrupted Custom Runs and testcase builds become `FAILED`, while interrupted `COMPILING`/`RUNNING` submissions finish as safe `IE`; none are automatically re-executed. SQLite, one Server process for atomic in-process capacity admission, and single-host execution remain the scaling boundary.
 
 Run the fast, Docker-free checks with:
 
@@ -218,11 +242,15 @@ With Docker and the judge image available, run the isolated end-to-end checks:
 python scripts/smoke_test_stack.py
 python scripts/smoke_test_judge.py
 python scripts/smoke_test_generator.py
+python scripts/smoke_test_sandbox.py
+python scripts/smoke_test_worker_failures.py
+python -m playwright install chromium
+python scripts/smoke_test_phase3_deploy.py
 ```
 
-The first script verifies a custom run plus the complete API → queue → worker → Docker → feedback flow against a temporary database. The second verifies AC, WA, CE, RE, TLE, MLE, and OLE. The third compiles a real C++ generator and standard solution and verifies two generated input/output pairs. The scripts remove their temporary jobs and data when complete; they do not use the configured production database.
+The scripts cover the temporary-database stack flow; all verdicts plus exit-code and output-limit boundaries; a real generator/std pair; network, PID, host-file, read-only-root and cleanup isolation; safe IE handling for corrupt/missing testcase files and an unavailable image; and a real Chromium flow through isolated Compose/Nginx plus a host Worker at `/minioj/`. The Phase 3 deployment smoke uses temporary database/data directories, a random loopback port, and its own Compose project; it verifies browser login, token creation, Run Sample, Custom Test, Submit/automatic result refresh, AC/CE/TLE, Docker-fault 503, and cleanup. It does not deploy production.
 
-The `pytest` suite does not require Docker and does not execute untrusted binaries. The two smoke-test scripts do require a running Docker daemon and the `minioj-cpp20:latest` image.
+The `pytest` suite does not require Docker and does not execute untrusted binaries. Docker smoke scripts require a running Docker daemon and the `minioj-cpp20:latest` image; the Phase 3 deployment smoke also requires the Playwright Chromium download.
 
 ## Rebuild and restart
 

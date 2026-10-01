@@ -54,6 +54,7 @@ class Settings:
     )
     root_path: str = field(default_factory=_root_path_from_env)
     docker_image: str = os.getenv("MINIOJ_DOCKER_IMAGE", "minioj-cpp20:latest")
+    worker_owner: str = os.getenv("MINIOJ_WORKER_OWNER", "worker").strip()
     feedback_policy: str = os.getenv("MINIOJ_FEEDBACK_POLICY", "full")
     session_https_only: bool = os.getenv(
         "MINIOJ_SESSION_HTTPS_ONLY", "false"
@@ -63,6 +64,8 @@ class Settings:
         "yes",
     }
     output_limit_bytes: int = int(os.getenv("MINIOJ_OUTPUT_LIMIT_BYTES", "1048576"))
+    compile_time_limit_ms: int = int(os.getenv("MINIOJ_COMPILE_TIME_LIMIT_MS", "30000"))
+    compile_memory_mb: int = int(os.getenv("MINIOJ_COMPILE_MEMORY_MB", "512"))
     source_limit_bytes: int = int(os.getenv("MINIOJ_SOURCE_LIMIT_BYTES", "262144"))
     stdin_limit_bytes: int = int(os.getenv("MINIOJ_STDIN_LIMIT_BYTES", "262144"))
     testcase_file_limit_bytes: int = int(
@@ -76,6 +79,16 @@ class Settings:
     )
     generator_max_cases: int = int(os.getenv("MINIOJ_GENERATOR_MAX_CASES", "50"))
     token_default_days: int = int(os.getenv("MINIOJ_TOKEN_DEFAULT_DAYS", "90"))
+    max_queued_submissions: int = int(
+        os.getenv("MINIOJ_MAX_QUEUED_SUBMISSIONS", "1000")
+    )
+    max_queued_runs: int = int(os.getenv("MINIOJ_MAX_QUEUED_RUNS", "16"))
+    custom_run_wait_seconds: float = float(
+        os.getenv("MINIOJ_CUSTOM_RUN_WAIT_SECONDS", "45")
+    )
+    overload_retry_after_seconds: int = int(
+        os.getenv("MINIOJ_OVERLOAD_RETRY_AFTER_SECONDS", "2")
+    )
 
     @property
     def jobs_dir(self) -> Path:
@@ -91,14 +104,30 @@ class Settings:
                 f"least {MINIMUM_SECRET_KEY_LENGTH} characters before starting "
                 "the MiniOJ server."
             )
+        if self.feedback_policy not in {"full", "diagnostic", "verdict_only"}:
+            raise RuntimeError(
+                "MINIOJ_FEEDBACK_POLICY must be full, diagnostic, or verdict_only."
+            )
         self.validate_worker()
 
     def validate_worker(self) -> None:
+        if not self.worker_owner.strip():
+            raise RuntimeError("MINIOJ_WORKER_OWNER must not be empty.")
         positive_limits = {
+            "MINIOJ_OUTPUT_LIMIT_BYTES": self.output_limit_bytes,
+            "MINIOJ_SOURCE_LIMIT_BYTES": self.source_limit_bytes,
+            "MINIOJ_STDIN_LIMIT_BYTES": self.stdin_limit_bytes,
             "MINIOJ_TESTCASE_FILE_LIMIT_BYTES": self.testcase_file_limit_bytes,
+            "MINIOJ_COMPILE_TIME_LIMIT_MS": self.compile_time_limit_ms,
+            "MINIOJ_COMPILE_MEMORY_MB": self.compile_memory_mb,
             "MINIOJ_TESTCASE_BUILD_TIME_LIMIT_MS": self.testcase_build_time_limit_ms,
             "MINIOJ_TESTCASE_BUILD_MEMORY_MB": self.testcase_build_memory_mb,
             "MINIOJ_GENERATOR_MAX_CASES": self.generator_max_cases,
+            "MINIOJ_MAX_QUEUED_SUBMISSIONS": self.max_queued_submissions,
+            "MINIOJ_MAX_QUEUED_RUNS": self.max_queued_runs,
+            "MINIOJ_CUSTOM_RUN_WAIT_SECONDS": self.custom_run_wait_seconds,
+            "MINIOJ_OVERLOAD_RETRY_AFTER_SECONDS": self.overload_retry_after_seconds,
+            "MINIOJ_TOKEN_DEFAULT_DAYS": self.token_default_days,
         }
         invalid = [name for name, value in positive_limits.items() if value <= 0]
         if invalid:

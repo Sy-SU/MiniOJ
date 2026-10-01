@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from minioj.security import EMAIL_MAX_LENGTH, PASSWORD_MAX_BYTES, USERNAME_MAX_LENGTH
 
@@ -29,9 +29,24 @@ class SubmissionCreate(BaseModel):
 
 
 class RunRequest(BaseModel):
-    code: str
+    source_code: str | None = None
+    code: str | None = None
     language: str = "cpp20"
     stdin: str = ""
+
+    @model_validator(mode="after")
+    def resolve_source_code(self) -> RunRequest:
+        if self.source_code is None and self.code is None:
+            raise ValueError("source_code is required")
+        if (
+            self.source_code is not None
+            and self.code is not None
+            and self.source_code != self.code
+        ):
+            raise ValueError("source_code and code must match when both are provided")
+        if self.source_code is None:
+            self.source_code = self.code
+        return self
 
 
 class ProblemCreate(BaseModel):

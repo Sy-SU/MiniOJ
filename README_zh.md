@@ -11,7 +11,7 @@ MiniOJ 是一个面向浏览器用户和 Coding Agent 的轻量级多用户在�
 - 使用 Argon2 存储密码哈希
 - 只在创建时显示一次的 Agent API Token；数据库仅存 Token 摘要
 - 题面、公开样例和文件系统中的隐藏测试数据
-- 浏览器代码编辑、Custom Run、正式提交、提交历史和详细结果
+- 浏览器代码编辑、独立 Run Sample／Custom Test／Submit、提交历史和自动更新结果
 - 版本化 REST API、Agent 专用题目数据和结构化 Judge Feedback
 - 与 HTTP Server 分离的 Judge Worker
 - 禁用网络并限制 CPU、内存、PID、权限、执行时间和输出量的 Docker Sandbox
@@ -25,7 +25,7 @@ V1 明确不包含 Contest、排行榜、OAuth、Special Judge、Interactive Pro
 浏览器 ── Session Cookie ─┐
                          ├── FastAPI Server ── SQLite
 Agent ─── Bearer Token ──┘          │
-                                    │ QUEUED Submission
+                                    │ QUEUED Run／Build／Submission
                              独立 Judge Worker
                                     │
                              受限 Docker 容器
@@ -33,7 +33,7 @@ Agent ─── Bearer Token ──┘          │
                                 C++20 程序
 ```
 
-Server 不会直接执行用户二进制文件。Worker 调用 Docker，并且只把当前 Job 目录挂载到用户代码容器中。Docker Socket、OJ 数据库、WSL Home 和完整 Testcase 目录都不会挂载到用户程序容器。
+Server 不会直接执行用户二进制文件。Custom Run 在 HTTP 请求等待期间进入内部数据库队列，所有不可信执行都由独立 Worker 调用 Docker；用户代码容器只挂载当前 Job 目录。Docker Socket、OJ 数据库、WSL Home 和完整 Testcase 目录都不会挂载到用户程序容器。
 
 ## 环境要求
 
@@ -154,14 +154,22 @@ set +a
 | `MINIOJ_TESTCASE_BUILD_MEMORY_MB` | `512` | std 或 generator 单次运行内存上限 |
 | `MINIOJ_GENERATOR_MAX_CASES` | `50` | 单个 generator 任务最多生成的用例数 |
 | `MINIOJ_DOCKER_IMAGE` | `minioj-cpp20:latest` | 判题镜像名称 |
+| `MINIOJ_WORKER_OWNER` | `worker` | Worker 清理 Docker 容器使用的实例标签；并行隔离实例必须不同 |
 | `MINIOJ_FEEDBACK_POLICY` | `full` | `full`、`diagnostic` 或 `verdict_only` |
 | `MINIOJ_SESSION_HTTPS_ONLY` | `false` | HTTPS 部署时设为 `true` |
 | `MINIOJ_SOURCE_LIMIT_BYTES` | `262144` | Source 最大字节数 |
 | `MINIOJ_STDIN_LIMIT_BYTES` | `262144` | Custom Run 输入最大字节数 |
 | `MINIOJ_OUTPUT_LIMIT_BYTES` | `1048576` | stdout 与 stderr 合并上限 |
+| `MINIOJ_COMPILE_TIME_LIMIT_MS` | `30000` | C++ 编译时间上限 |
+| `MINIOJ_COMPILE_MEMORY_MB` | `512` | C++ 编译最低内存上限；题目限制更高时取更高值 |
 | `MINIOJ_TOKEN_DEFAULT_DAYS` | `90` | Token 默认有效天数 |
+| `MINIOJ_MAX_QUEUED_SUBMISSIONS` | `1000` | 正式提交排队容量 |
+| `MINIOJ_MAX_QUEUED_RUNS` | `16` | Custom Run 排队容量 |
+| `MINIOJ_CUSTOM_RUN_WAIT_SECONDS` | `45` | 同步 Custom Run 等待 Worker 的最长秒数 |
+| `MINIOJ_OVERLOAD_RETRY_AFTER_SECONDS` | `2` | HTTP 429 的 `Retry-After` 秒数 |
+| `MINIOJ_HTTP_PORT` | `80` | Compose Nginx 对外端口 |
 
-未设置 `MINIOJ_JOB_DIR` 时仍沿用现有的 `data/jobs` 布局。宿主机 Worker 可推荐设为 `/tmp/minioj/jobs`，将临时编译和运行文件与需备份的 Testcase 分开。用于 Docker Bind Mount 的目录必须对 Docker Daemon 可见；当前 Compose Custom Run 的限制仍以 [架构文档](docs/architecture.md) 为准。
+未设置 `MINIOJ_JOB_DIR` 时仍沿用现有的 `data/jobs` 布局。宿主机 Worker 可设为 `/tmp/minioj/jobs`，将临时编译和运行文件与需备份的 Testcase 分开。用于 Docker Bind Mount 的目录必须对 Docker Daemon 可见。Compose Server 通过 SQLite 排队 Custom Run，不需要 Docker；宿主 Worker 必须与 Server 共用数据库和 data。隔离部署还可用 `MINIOJ_DATABASE_DIR`／`MINIOJ_DATA_HOST_DIR` 覆盖宿主挂载目录。
 
 ## 初始化 MiniOJ
 
@@ -226,9 +234,22 @@ set +a
 minioj-worker
 ```
 
-Worker 是前台常驻进程，会占用当前终端，每秒检查一次待判题提交，不会启动后立即返回命令提示符。看到 `Worker ready` 和 `No queued submissions; waiting for new submissions.` 表示已就绪，正在等待任务，并非卡住。请保持此终端运行，在浏览器中提交代码后会显示判题日志；按 `Ctrl+C` 停止。
+Worker 是前台常驻进程，会占用当前终端，每秒检查 Custom Run、TestcaseBuild 和 Submission。看到 `Worker ready` 和 `No queued work; waiting for Custom Runs, testcase builds, or submissions.` 表示已就绪，正在等待任务，并非卡住。请保持此终端运行；按 `Ctrl+C` 停止。启动时会在 `MINIOJ_JOB_DIR` 获取独占锁、安全终结上次中断的任务并清理本实例残留容器／Job 目录；使用同一 Job 目录的第二个 Worker 会被拒绝。
 
-如需处理完当前队列后自动退出，可运行 `minioj-worker --once`（会处理待判题提交，直到队列为空）。启动日志也会显示数据库初始化和 Docker 判题镜像检查阶段，便于定位启动问题。
+如需处理完当前队列后自动退出，可运行 `minioj-worker --once`（会处理三类队列，直到都为空）。启动日志也会显示数据库初始化和 Docker 判题镜像检查阶段，便于定位启动问题。
+
+若要让 Worker 作为 WSL systemd user service 常驻，仓库提供的 unit 默认假设项目位于 `%h/github-repos/MiniOJ`、Conda 位于 `%h/miniconda3`；路径不同请先编辑：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/minioj-worker.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now minioj-worker
+systemctl --user status minioj-worker
+journalctl --user -u minioj-worker -f
+```
+
+unit 会读取项目 `.env`、失败后自动重启。WSL 必须启用 systemd；`sudo loginctl enable-linger "$USER"` 可让用户服务在没有交互登录时启动。Docker 必须先运行，当前用户必须有 Docker 权限。
 
 访问：
 
@@ -242,7 +263,7 @@ Worker 是前台常驻进程，会占用当前终端，每秒检查一次待判�
 docker compose up -d --build
 ```
 
-访问 <http://100.95.57.121/minioj/>。只有 Nginx 对外监听端口，FastAPI 仅在 Compose 内部网络提供服务；Nginx 会把 `/minioj/` 前缀转发给 FastAPI。如果主机地址变化，请修改 `.env` 中的 `MINIOJ_HTTP_BIND`。
+访问 <http://100.95.57.121/minioj/>。只有 Nginx 对外监听端口，FastAPI 仅在 Compose 内部网络提供服务；Nginx 会保留 `/minioj/` 前缀及原始 Host／端口。如果主机地址或端口变化，请修改 `.env` 中的 `MINIOJ_HTTP_BIND`／`MINIOJ_HTTP_PORT`。
 
 Docker 部署时，推荐在正在运行的 Server 容器内创建管理员，确保写入网页使用的同一数据库：
 
@@ -290,7 +311,7 @@ docker compose ps
 
 脚本不会修改 `.env`、当前终端环境或 Docker Daemon 配置。本地已缓存的 BuildKit 镜像可用于启动构建器，因此当前机器不依赖 Daemon 的旧代理完成重建；首次安装需要拉取 BuildKit 镜像，或直接使用 `docker pull` 时，仍需为 Docker Daemon 配置可用代理。缓存保留机制见 [Docker 官方说明](https://docs.docker.com/build/builders/drivers/docker-container/#cache-persistence)。
 
-判题 Worker 不在 Compose 中，需要判题时还要在单独的 WSL 终端启动：
+判题 Worker 不在 Compose 中，需要以前述 systemd user service 常驻，或在单独的 WSL 终端启动：
 
 ```bash
 conda activate minioj
@@ -337,6 +358,11 @@ export OJ_TOKEN='oj_replace_me'
 ```bash
 curl -H "Authorization: Bearer $OJ_TOKEN" \
   http://localhost:8000/api/v1/agent/problems/two-sum
+
+curl -X POST http://localhost:8000/api/v1/runs \
+  -H "Authorization: Bearer $OJ_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"language":"cpp20","source_code":"int main(){return 0;}","stdin":""}'
 ```
 
 提交 C++20 代码：
@@ -371,12 +397,14 @@ Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐
 | `GET` | `/api/v1/problems` | 公开题目列表 |
 | `GET` | `/api/v1/problems/{id}` | 公开题目详情 |
 | `GET` | `/api/v1/agent/problems/{id}` | 清洗后的 Agent 题目数据 |
-| `POST` | `/api/v1/runs` | 同步 Custom Run |
+| `POST` | `/api/v1/runs` | 由 Worker Custom Run 队列支撑的同步响应 |
 | `POST` | `/api/v1/submissions` | 创建 Submission，返回 `202` |
 | `GET` | `/api/v1/submissions/{id}` | 查询稳定的状态和结果字段 |
 | `GET` | `/api/v1/agent/submissions/{id}/feedback` | 获取结构化调试反馈 |
 
 使用 Cookie 认证的 API 写操作必须携带 `X-CSRF-Token`；内置网页会自动处理。Bearer Token 请求不需要 CSRF Token。
+
+Custom Run 使用 `source_code`；只传旧字段 `code` 时仍兼容，同时传入时两者必须相同。正式提交或 Custom Run 队列满时返回 HTTP 429 和 `Retry-After`；Judge 基础设施故障或 Custom Run 等待 Worker 超时返回脱敏 HTTP 503；成功创建 Submission 仍返回 202。本轮没有新增公开的 Custom Run 轮询路由。
 
 ## 数据目录
 
@@ -388,10 +416,14 @@ Agent 题目接口默认不返回 Rating、Tags、Editorial、历史解法或隐
 - 单个 generator 任务最多用例数：`MINIOJ_GENERATOR_MAX_CASES`，默认 50
 - Source 上限：`MINIOJ_SOURCE_LIMIT_BYTES`，默认 262144 字节
 - Custom Run 输入上限：`MINIOJ_STDIN_LIMIT_BYTES`，默认 262144 字节
+- 编译限制：`MINIOJ_COMPILE_TIME_LIMIT_MS`，默认 30000 ms；`MINIOJ_COMPILE_MEMORY_MB`，默认 512 MiB，题目内存限制更高时取更高值
 - stdout + stderr 合并上限：`MINIOJ_OUTPUT_LIMIT_BYTES`，默认 1048576 字节
 - API Token 默认有效期：`MINIOJ_TOKEN_DEFAULT_DAYS`，默认 90 天
+- Submission／Custom Run 排队容量：`MINIOJ_MAX_QUEUED_SUBMISSIONS`（1000）和 `MINIOJ_MAX_QUEUED_RUNS`（16）
+- Custom Run 等待／过载重试提示：`MINIOJ_CUSTOM_RUN_WAIT_SECONDS`（45 秒）和 `MINIOJ_OVERLOAD_RETRY_AFTER_SECONDS`（2 秒）
+- Worker Docker 清理标签：`MINIOJ_WORKER_OWNER`，默认 `worker`；并行隔离实例必须使用不同值
 
-V1 通常只运行一个 Worker。Submission 和 TestcaseBuild 都使用条件更新领取 QUEUED 行，但 SQLite 和单机容量仍是扩展边界。Worker 中断时，已经进入 RUNNING 的任务目前需要人工诊断，自动恢复仍待实现。
+V1 每个 Job 目录只允许一个 Worker。CustomRun、Submission 和 TestcaseBuild 都使用条件更新领取 QUEUED 行，并由进程独占锁防止第二个本机 Worker 竞争。重启时，中断的 CustomRun／TestcaseBuild 变为 `FAILED`，中断的 `COMPILING`／`RUNNING` Submission 以安全 `IE` 终结，都不会自动重复执行；SQLite、单 Server 进程内的原子容量准入和单机执行仍是扩展边界。
 
 ## 开发与测试
 
@@ -410,11 +442,15 @@ Docker Daemon 和判题镜像可用时，运行隔离的端到端检查：
 python scripts/smoke_test_stack.py
 python scripts/smoke_test_judge.py
 python scripts/smoke_test_generator.py
+python scripts/smoke_test_sandbox.py
+python scripts/smoke_test_worker_failures.py
+python -m playwright install chromium
+python scripts/smoke_test_phase3_deploy.py
 ```
 
-第一个脚本使用临时数据库验证 Custom Run，以及 API → 队列 → Worker → Docker → Feedback 的完整流程；第二个脚本验证七种 Verdict；第三个脚本会真实编译 C++ generator 和 std，并验证两组自动生成的输入／输出。脚本完成后都会清理临时 Job 和数据，不会使用已配置的生产数据库。
+这些脚本分别覆盖临时数据库栈流程、全部 Verdict 及退出码／输出边界、真实 generator/std、网络／PID／宿主文件／只读根目录／清理隔离、Testcase 损坏或缺失和镜像不可用时的安全 IE，以及真实 Chromium 经隔离 Compose/Nginx + 宿主 Worker 的 `/minioj/` 流程。Phase 3 部署冒烟使用临时数据库／data、随机回环端口和独立 Compose project，验证登录、网页 Token、Run Sample、Custom Test、Submit／自动更新、AC/CE/TLE、Docker 故障 503 和清理，不会部署正式环境。
 
-`pytest` 测试套件不需要 Docker，也不会执行不可信程序。两个冒烟测试脚本需要正在运行的 Docker Daemon 和 `minioj-cpp20:latest` 镜像。
+`pytest` 测试套件不需要 Docker，也不会执行不可信程序。Docker 冒烟脚本需要正在运行的 Docker Daemon 和 `minioj-cpp20:latest` 镜像；Phase 3 部署冒烟还需要先下载 Playwright Chromium。
 
 ## 账号输入限制
 

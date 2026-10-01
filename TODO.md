@@ -2,7 +2,7 @@
 
 更新日期：2026-10-01。依据：本次提供的《MiniOJ：独立 OJ 项目规划与 Codex 执行提示词》。架构和协议见 [docs/architecture.md](docs/architecture.md)。
 
-当前工作区已在保留原有未提交修改的前提下完成 Phase 0 基线复验、Phase 1 及其 std／generator 扩展；未推进 Phase 2–5，也未部署正式环境。真实 Docker 已复验 generator → std 链路，但没有重跑正式 Submission 的七种 verdict 冒烟。
+Phase 0–1 已提交并推送为 `dbeb9e6`。当前工作区已完成 Phase 2–3：Judge／Worker、受控 Custom Run 队列、浏览器流程及隔离 Compose/Nginx 部署链路均已复验。未推进 Phase 4–5，也未部署正式环境。
 
 ## 状态与证据
 
@@ -10,21 +10,23 @@
 - **[x] 验收通过**：本轮已记录环境、命令和实际结果；只代表所述范围，不外推到其他阶段或正式部署。
 - **[ ] 待实现／待补齐**：没有实现证据，或与规划存在差距。
 - **[ ] 待验证**：实现或测试文件存在，但本轮没有运行；必须记录环境、版本、命令、结果和日期才能勾选验收项。
-- **当前工作区实测（2026-10-01）**：Conda `minioj` 环境，Python 3.12.14、Ruff 0.16.9、pytest 8.4.2；编辑页改进后，`ruff format --check .`（51 个文件）、`ruff check .`、`pytest`（183 passed in 79.63s）、`node --check static/alerts.js`、`node --check static/problem_form.js` 和 `git diff --check` 均通过。隔离数据库及回环 Uvicorn 上的真实 Chromium 验证了警告鼠标／键盘关闭及刷新恢复、std 粘贴保存／上传回显、四个分区、桌面 1365px／手机 390px 无页面横向溢出，且无页面脚本错误；临时服务已停止。
-- **此前验证**：Compose 配置解析、公式标记／本地资源回归与 KaTeX 0.18.10 Node 显示公式／MathML 冒烟通过；本次编辑页浏览器检查不代表所有公式视觉效果已验收。generator 扩展曾用现有 `minioj-cpp20:latest` 真实编译 generator 与 std，核对 2 组输入／输出；本轮只复验自动化回归，未重跑容器链路。Phase 0 时已确认真实 `.env` 被忽略且未跟踪。
+- **当前工作区实测（2026-10-01）**：Conda `minioj` 环境，Python 3.12.14、Ruff 0.16.9、pytest 8.4.2；`ruff format --check .`（57 个文件）、`ruff check .`、`pytest`（217 passed in 93.85s）、六个应用前端脚本 `node --check`、`docker compose config --quiet`、`systemd-analyze --user verify deploy/minioj-worker.service` 和 `git diff --check` 均纳入最终复验。
+- **Phase 2 真实 Docker 实测（2026-10-01）**：Docker Client／Server 29.8.1，镜像 `sha256:1408202922ade7964b2f82abd4ebb853ce63e2baf0cbdb14fcf9e306f5952a95`。栈冒烟通过 Custom Run 和 API → Submission → Worker → Docker → Feedback；Judge 冒烟通过 AC、WA、CE、RE、TLE、MLE、OLE、主动退出 124/137、有限短输出和编译输出超限／截断；Sandbox 冒烟通过网络、PID、宿主文件、只读根目录和容器清理；Worker 故障冒烟通过损坏／缺失 Testcase、不可用镜像的安全 IE 及 Web healthz 200；generator → std 两例复验通过。临时数据已清理。
+- **Phase 3 隔离部署实测（2026-10-01）**：Playwright Chromium 153.0.8010.12 在临时数据库、data、端口和独立 Compose project 中，经 Nginx + Server + 宿主 Worker 的 `/minioj/` 完成登录、网页创建 Token、Run Sample、Custom Test、Submit、自动轮询到 AC；独立 Bearer 客户端完成 CE、TLE 和查询。删除临时镜像别名注入 Docker 故障后 Custom Run 返回安全 503，Web health 保持 200；Custom Run 未创建额外 Submission，容器、Job 目录、Compose 容器／网络和临时数据均已清理。
+- **此前验证**：公式标记／本地资源回归与 KaTeX 0.18.10 Node 显示公式／MathML 冒烟、真实 Chromium 编辑页检查，以及 generator → std 两组真实输入／输出均通过；Phase 0 时已确认真实 `.env` 被忽略且未跟踪。
 - **隔离启动实测（2026-10-01）**：在 `/tmp` 临时目录连续两次执行 `minioj init-db`，确认 6 张业务表和独立 data/job 目录；以 Uvicorn 绑定 `127.0.0.1:18765` 后，`GET /`、`GET /healthz`、`GET /static/style.css` 均为 HTTP 200，随后正常停止并删除临时目录。
 
 本轮开始时 HEAD 为 7940c7a；工作区已有 README.md、README_zh.md、restart、database.py、models.py、server/web.py、test_restart.py 的未提交修改，以及新增 tests/test_username_case.py。本轮保留并复验这些工作，没有回退或重建骨架；新增的 Phase 0 改动另见本节任务。
 
-旧 TODO（2026-09-30）记录：基线 711bc3b 通过 Ruff 和 95 项 pytest；此前真实 Docker 冒烟覆盖七种 verdict 以及宿主机 TestClient → Worker → Docker → Feedback。保留为**历史验证记录**；本轮复验了当前工作区的 Docker-free 套件，但没有重跑真实 Docker 冒烟，也未核实远端推送状态。宿主机冒烟不等于 Compose 部署、全部安全边界或独立 HTTP 客户端已经验收。
+旧 TODO（2026-09-30）记录：基线 711bc3b 通过 Ruff 和 95 项 pytest，以及宿主机 TestClient → Worker → Docker → Feedback。保留为**历史验证记录**；当前已以新实现重新执行 Judge 和隔离冒烟，但仍不等于 Compose 部署或独立 HTTP 客户端已经验收。
 
 | 范围 | 实现证据 | 自动化证据 |
 | --- | --- | --- |
 | 基础 | [pyproject.toml](pyproject.toml)、[config.py](src/minioj/config.py)、[database.py](src/minioj/database.py)、[入口](src/minioj/server/main.py)、[CLI](src/minioj/cli.py) | [配置测试](tests/test_config.py)、[测试入口](tests/conftest.py)、[升级测试](tests/test_database_upgrade.py)、[子路径测试](tests/test_subpath.py)；本轮均随 pytest 通过 |
-| 用户、题目 | [模型](src/minioj/models.py)、[题目存储](src/minioj/problems.py)、[构建队列](src/minioj/testcase_builds.py)、[Markdown／TeX 解析](src/minioj/rendering.py)、[公式渲染](static/math.js)、[上传解析](src/minioj/server/uploads.py)、[Web](src/minioj/server/web.py) | [编辑／软删除／历史告警](tests/test_problem_lifecycle.py)、[Phase 1 回归](tests/test_phase1.py)、[std／generator](tests/test_testcase_builds.py)、[题目功能](tests/test_problem_features.py)、[升级测试](tests/test_database_upgrade.py) 等随 183 项 pytest 通过；编辑页 Chromium 检查通过；此前 KaTeX Node 冒烟通过 |
-| Judge | [Worker](src/minioj/worker/main.py)、[DockerJudge](src/minioj/judge/runner.py)、[Checker](src/minioj/judge/checker.py)、[镜像](docker/cpp20/Dockerfile) | Judge／Docker 命令／Worker 自动化测试通过；[generator 真实冒烟](scripts/smoke_test_generator.py) 通过，[正式 Judge 冒烟](scripts/smoke_test_judge.py) 本轮未运行 |
-| Web、Token、API | [API](src/minioj/server/api.py)、[schema](src/minioj/schemas.py)、[题目页](templates/problem_detail.html)、[提交页](templates/submission_detail.html)、[脚本](static/problem.js) | Web／Token／API 测试随 pytest 通过；[栈冒烟](scripts/smoke_test_stack.py) 本轮未运行 |
-| 部署 | [Compose](compose.yaml)、[Nginx](deploy/nginx.conf)、[restart](restart)、[README](README.md)、[中文 README](README_zh.md) | [restart 测试](tests/test_restart.py) 与 Compose 配置解析通过；未运行真实 Compose 全流程 |
+| 用户、题目 | [模型](src/minioj/models.py)、[题目存储](src/minioj/problems.py)、[构建队列](src/minioj/testcase_builds.py)、[Markdown／TeX 解析](src/minioj/rendering.py)、[公式渲染](static/math.js)、[上传解析](src/minioj/server/uploads.py)、[Web](src/minioj/server/web.py) | [编辑／软删除／历史告警](tests/test_problem_lifecycle.py)、[Phase 1 回归](tests/test_phase1.py)、[std／generator](tests/test_testcase_builds.py)、[题目功能](tests/test_problem_features.py)、[升级测试](tests/test_database_upgrade.py) 等随当前 pytest 通过；编辑页 Chromium 和 KaTeX Node 冒烟通过 |
+| Judge | [状态／结果契约](src/minioj/judge/contracts.py)、[Worker](src/minioj/worker/main.py)、[DockerJudge](src/minioj/judge/runner.py)、[Checker](src/minioj/judge/checker.py)、[镜像](docker/cpp20/Dockerfile) | [契约](tests/test_judge_contracts.py)、[Judge](tests/test_judge.py)、[Docker](tests/test_docker_runner.py)、[Worker](tests/test_worker.py) 随 pytest 通过；Judge、Sandbox、Worker 故障三个真实冒烟通过 |
+| Web、Token、API | [API](src/minioj/server/api.py)、[schema](src/minioj/schemas.py)、[统一反馈](src/minioj/feedback.py)、[题目页](templates/problem_detail.html)、[提交页](templates/submission_detail.html)、[题目脚本](static/problem.js)、[提交脚本](static/submission.js) | Web／Token／API 测试随 pytest 通过；[栈冒烟](scripts/smoke_test_stack.py) 和真实 Chromium [Phase 3 部署冒烟](scripts/smoke_test_phase3_deploy.py) 通过 |
+| 部署 | [Compose](compose.yaml)、[Nginx](deploy/nginx.conf)、[Worker unit](deploy/minioj-worker.service)、[restart](restart)、[README](README.md)、[中文 README](README_zh.md) | restart 测试、Compose 解析、systemd unit 校验及隔离 Nginx + Server + 宿主 Worker 全流程通过；未部署正式环境 |
 
 ## Phase 0：项目基础
 
@@ -41,7 +43,7 @@
 - [x] 本轮补齐：新增 `MINIOJ_JOB_DIR`；未设置时兼容原 `MINIOJ_DATA_DIR/jobs`，宿主 Worker 可显式使用 `/tmp/minioj/jobs`。`.env.example` 补齐源码、Custom Run 输入、合并输出和 Token 默认期限设置，Compose 显式转交 Server 使用的运行配置。
 - [x] 本轮补齐：Server 导入时要求非占位且至少 32 字符的 `MINIOJ_SECRET_KEY`，错误不回显 Secret；README 明确宿主进程不会自动读取 `.env`、每个终端的导入方式，以及 Compose 只使用显式映射。
 - [x] 验收通过：空库和重复初始化经隔离 CLI 实测；旧 Token preview 升级、账号保留、用户名大小写索引幂等和冲突拒绝由自动化测试通过。
-- [x] 验收通过：此前隔离 Uvicorn 的首页、健康检查、静态资源均返回 200，Compose 配置解析通过；当前工作区 Ruff、183 项 pytest 及差异检查通过。
+- [x] 验收通过：此前隔离 Uvicorn 的首页、健康检查、静态资源均返回 200；当前工作区 Ruff、217 项 pytest、Compose 配置解析及差异检查纳入最终复验。
 
 **交付物：** 可运行基础、配置样例、数据库初始化／升级入口、基础测试、起步说明。
 
@@ -84,7 +86,7 @@
 - [x] 验收通过：std 粘贴保存／回显、HTML 转义、Admin／CSRF／源码隐私、空白／超限／同时粘贴与上传拒绝及草稿保留均有自动化回归；真实 Chromium 验证警告鼠标／键盘关闭及刷新恢复、std 粘贴保存／文件上传回显，以及桌面和手机编辑页分区布局。
 - [x] 验收通过：自动化覆盖 std／generator 队列、seed/index 参数、失败状态和原子批量保存；题目修改后旧排队提交不使用新数据评测，运行中评测使用已读取数据；删题取消构建、更换 std 拒绝过期任务，同一 std 连续追加任务可成功。此前真实 Docker 冒烟通过 2 组 generator → std 输入／输出，本轮不重跑容器编译链路。
 
-**范围边界：** std／generator 的真实 Docker 最小链路已通过，但正式 Submission Judge、Worker 中断恢复、反向代理、外部 HTTP 客户端和正式部署仍未据此验收；这些仍属于 Phase 2–5。
+**范围边界：** Phase 1 的验收本身不外推到 Judge 或部署；正式 Submission Judge 与 Worker 恢复现已在 Phase 2 单独验收，反向代理、外部 HTTP 客户端和正式部署仍属于 Phase 3–5。
 
 ## Phase 2：Submission 与 Judge
 
@@ -98,26 +100,28 @@
 - [x] 已有实现：DockerJudge 集中封装 Docker、容器内 g++ C++20 编译、逐用例执行和 Checker；正式请求只入队。
 - [x] 已有实现：禁网、非 root、CPU／内存／PID／时间限制、只读根文件系统、任务目录挂载、输出监测及正常路径清理。
 - [x] 已有实现：八种 verdict 分支、结构化结果存储、基础设施异常映射 IE；Checker 保留行内差异。
-- [x] 已有实现：Judge mock、部分 Docker 命令／故障测试，以及七种 verdict 的真实 Docker 冒烟脚本。
-- [ ] 待补齐：内部与 API 共用状态／verdict 枚举；当前为分散字符串，需校验非终态 verdict 和终态字段规则。
-- [ ] 待补齐：CompileResult 保存 success、exit_code、stdout、stderr、time_ms 和截断信息；落实逐用例结果的保存范围。
-- [ ] 待补齐：统一编译输出超限处理，覆盖短进程在采样前退出仍超限、stdout/stderr 合并限额和截断标记。
-- [ ] 待补齐：区分用户返回 124/137、真实超时、OOM 与 Docker 故障；明确统计方法，采集失败不能当真实零占用。
-- [ ] 待决策后实现：任务归属、中断恢复或终态、防重入；覆盖并发 claim、恢复和重复结果写入。
-- [ ] 待补齐：处理 claim、读取题目和落库等外围异常；Worker 内部记录诊断，对外 IE 只返回安全类别与说明。
-- [ ] 待补齐：清理失败可观测，覆盖异常／中断残留容器和目录，确认编译可写目录隔离。
-- [ ] 待决策后实现：Custom Run 和正式提交的容量、并发及过载响应，维持 SQLite、单机 Worker 范围。
-- [ ] 待补齐：提交创建、claim、编译／评测开始结束、verdict、Sandbox／Worker 异常日志；关联 job/submission，不记录 Secret。
-- [ ] 待验证：专用环境中运行资源限制和故障注入，记录结果与清理证据。
+- [x] 已有实现并复验：Judge mock、Docker 命令／故障测试和真实 Docker 冒烟；本轮扩展至七种 verdict、用户主动返回 124/137、有限短输出及编译输出超限。
+- [x] 本轮补齐：Judge、Worker、模型默认值和 API 流程共用 `SubmissionStatus`／`Verdict` 枚举；最终写入校验非终态字段、FINISHED verdict 一致性和非 IE compile_result。
+- [x] 本轮补齐：CompileResult 保存 success、exit_code、stdout、stderr、time_ms、可空 memory_kb、超时／输出／OOM 及逐流截断标志；judge_result 为每个已执行用例保存不含内容的结果 metadata，首个失败仍保留兼容 failure。
+- [x] 本轮补齐并验证：进程退出后复查 stdout/stderr 合并大小，编译与有限短程序输出超限均记录 OLE／CE 和截断标志；字节计数不再受 UTF-8 替换字符长度影响。
+- [x] 本轮补齐并验证：GNU timeout 使用 preserve-status；快速主动返回 124/137 为 RE，达到期限后的 137/143 为 TLE，OOMKilled 为 MLE。time_ms 为宿主墙钟毫秒，多例取最大值；memory_kb 采集失败为 null，不伪造 0。
+- [x] 本轮决策并实现：V1 每个 Job 目录只允许一个 Worker；进程锁 + 条件 claim 防重入。启动时中断 Submission 终结为安全 IE、构建终结为 FAILED，不自动重跑；最终结果条件更新，不覆盖已终态结果。
+- [x] 本轮补齐：claim／读取／Judge／落库外围异常纳入循环日志及恢复路径；持久化 IE 只含安全类别，内部文件路径、Docker 原因和 traceback 仅写服务端日志，Custom Run 503 也不回显内部诊断。
+- [x] 本轮补齐并验证：容器带 Worker owner 标签，启动清理遗留容器及 judge／构建目录；正常清理失败升级为可观测基础设施错误。单元测试覆盖删除失败，真实冒烟确认正常及 verdict 失败路径无残留。
+- [x] Phase 3 确认并实现：正式提交及 Custom Run 队列有独立可配置容量；过载返回 HTTP 429 + `Retry-After`。成功提交仍为 202，基础设施故障仍为安全 503，不增加公共轮询路由。
+- [x] 本轮补齐：提交创建、claim、编译开始／完成、最终 verdict、恢复、Sandbox／Worker 异常日志均关联 submission/build 标识，不记录源码、Token 或 Secret。
+- [x] 验收通过：Docker 29.8.1、镜像 `sha256:140820...2a95` 的受控实测覆盖资源边界、隔离、清理、损坏／缺失 Testcase、不可用镜像及 Web 健康检查。
 
 **交付物：** 独立 Worker、C++20 镜像、完整评测路径、结果结构、恢复及受控测试记录。
 
 **验收标准：**
 
-- [ ] 待验证：正确程序 AC、错误答案 WA、编译错误 CE、用户崩溃 RE、无限循环 TLE、内存超限 MLE、无限输出 OLE。
-- [ ] 待验证：Docker／Sandbox 失败、testcase 缺失损坏、Judge 异常均为 IE；Worker 故障不使 Web 崩溃或静默丢任务。
-- [ ] 待验证：不重复 claim，中断任务最终恢复或终止，正常及异常结束都清理容器和目录。
-- [ ] 待验证：受控 PID 超限、联网和宿主文件访问被限制；容器不可访问 socket、home、数据库、.env、其他题目和提交。
+- [x] 验收通过：正确程序 AC、错误答案 WA、编译错误 CE、用户崩溃 RE、无限循环 TLE、内存超限 MLE、无限／有限大输出 OLE。
+- [x] 验收通过：不可用镜像、Testcase 缺失／checksum 损坏及注入 Judge 异常均为安全 IE；隔离 TestClient 健康检查在 Worker 故障后仍为 200。
+- [x] 验收通过：自动化验证不重复 claim／结果写入、Worker 独占和中断终结；真实 Docker verdict、编译失败及隔离用例后均无该 owner 容器或新增 job 目录残留。
+- [x] 验收通过：真实容器内 fork 达到 PID 限制、外网连接失败、Docker socket／数据库／.env／root 私有路径不可取得，根文件系统不可写。
+
+**范围边界：** Phase 2 的直接 Judge／Worker 证据不单独代表部署；Compose/Nginx、Custom Run 队列和独立 HTTP 客户端已在 Phase 3 另行隔离验收，但仍不代表正式环境部署。
 
 ## Phase 3：完整浏览器流程
 
@@ -127,24 +131,24 @@
 
 **任务：**
 
-- [x] 已有实现：C++20 textarea、输入框、Run code 和 Submit；Custom Run 使用 Sandbox，不创建正式 Submission。
+- [x] 已有实现：C++20 textarea、输入框和 Submit；Custom Run 使用 Sandbox，不创建正式 Submission。
 - [x] 已有实现：本人提交列表／详情、Admin 全部提交、源码、CE 日志、测试摘要与资源展示。
-- [ ] 待补齐：独立 Run Sample、Custom Test、Submit 操作；当前只预填首个样例，没有独立 Run Sample。
-- [ ] 待决策后修复：Custom Run 调度和同步／异步交付；Web 当前直接调用 Docker，Compose Server 缺 CLI 和连接通道。保留 POST /api/v1/runs，不擅加轮询接口。
-- [ ] 待补齐：Custom Run 接收约定的 source_code，处理现有 code 兼容，并同步 Web、测试和说明。
-- [ ] 待补齐：提交状态自动更新、请求失败及输出截断提示；当前提交详情需手动刷新。
-- [ ] 待补齐：提交页应用统一 Feedback Mode；当前直接展示失败 input/expected/actual 和 CE 日志。
-- [ ] 待补齐：WSL Worker 常驻配置，明确工作目录、环境、数据库／数据路径、Docker 依赖、自动重启和日志。
-- [ ] 待验证：真实浏览器交互；已有 TestClient 页面渲染测试不能证明 JavaScript 和 Compose 流程可用。
-- [ ] 待验证：隔离数据库、数据目录和端口，以 Nginx + Server + 宿主 Worker 验收 /minioj/ 下登录、Token、运行、提交、CE、TLE、Docker 故障及清理。
+- [x] 本轮补齐：独立 Run Sample、Custom Test、Submit；样例可选择并在页面比较公开 expected，自定义输入不再伪装成样例入口。
+- [x] 本轮决策并实现：保留同步 `POST /api/v1/runs`，内部新增短生命周期 CustomRun 数据库队列，由独占 Worker 执行；Server 不再需要 Docker CLI/socket，不新增公共轮询接口。排队等待超时或基础设施故障返回安全 503。
+- [x] 本轮补齐：Custom Run 接受约定 `source_code`，兼容旧 `code`；两者同时出现但不同则 422。Web、测试和说明统一使用 `source_code`。
+- [x] 本轮补齐：提交详情以现有查询接口自动更新并在终态刷新；请求失败指数退避，Run/Submit 显示 429 的 Retry-After、基础设施错误和输出截断提示。
+- [x] 本轮补齐：Web 与 Agent Feedback 共用服务端转换；full、diagnostic、verdict_only 均作用于提交详情，非法模式启动即拒绝。长度限制、生效模式告知及最终白名单仍明确留在 Phase 5。
+- [x] 本轮补齐：提供 systemd user unit，明确工作目录、`.env`、Conda 可执行文件、自动重启和 journal 日志；`systemd-analyze --user verify` 通过。Worker owner 标签可按实例配置，避免隔离实例互相清理。
+- [x] 验收通过：Playwright Chromium 153.0.8010.12 真实执行登录、网页 Token、Run Sample、Custom Test、Submit 和自动结果刷新，无需把 TestClient 当作浏览器证据。
+- [x] 验收通过：临时数据库／data／端口及独立 Compose project 下，以 Nginx + Server + 宿主 Worker 完成 `/minioj/` 全链路、CE、TLE、Docker 故障 503、Web health 和清理；同时修复代理非标准端口和静态资源 root_path 转发。
 
 **交付物：** 完整 Web OJ、Custom Run 部署链路、状态更新、浏览器及部署验收记录。
 
 **验收标准：**
 
-- [ ] 待验证：登录 → 看题 → 输入代码 → Run Sample／Custom Test → Submit → 自动获取最终结果。
-- [ ] 待验证：Custom Run 不读取 hidden 或创建正式提交；详情权限和反馈策略一致。
-- [ ] 待验证：按说明从 WSL 重启后恢复 Web 和 Worker，Custom Run 与正式判题均可用。
+- [x] 验收通过：登录 → 看题 → 输入代码 → Run Sample／Custom Test → Submit → 自动获取最终 AC。
+- [x] 验收通过：Custom Run 仅接收调用方 stdin，不查询 hidden，数据库断言未创建额外 Submission；详情所有权回归和 Web／Agent 反馈策略一致性通过。
+- [x] 验收通过（隔离等价重启）：Compose 服务从空临时环境启动，宿主 Worker 停止后以同一数据库／data 重新启动并完成 Docker 故障路径；未为此中断当前 WSL 或部署正式环境。
 
 ## Phase 4：Token 与普通机器接口
 
@@ -180,9 +184,9 @@
 
 - [x] 已有实现：程序用题目接口手工选择题面、说明、限制和样例，排除 rating、tags 和 hidden。
 - [x] 已有实现：专用 Feedback API、非终态响应、CE 编译信息及三种模式的局部过滤分支。
-- [ ] 待补齐：AC/WA/CE/RE/TLE/MLE/OLE/IE 正式反馈 schema 和内部结果转换；当前是读取 judge_result 后局部删字段。
+- [ ] 待补齐：AC/WA/CE/RE/TLE/MLE/OLE/IE 正式反馈 schema；内部结果已集中到共用转换，但仍未形成显式响应模型和完整 verdict 矩阵。
 - [ ] 待决策后实现：diagnostic 白名单、verdict_only 受限说明／失败序号、生效模式告知。
-- [ ] 待补齐：普通提交 API、Feedback API、Web／Admin 共用暴露规则；非法模式配置不能意外扩大暴露。
+- [ ] 待补齐：普通提交 API、Feedback API、Web／Admin 的最终暴露规则；Web 与 Agent 已共用基础转换且非法模式启动即拒绝，角色差异、模式告知和完整白名单仍待落实。
 - [ ] 待补齐：限制 input、expected、actual、stderr、编译诊断长度，去除内部路径、Docker 日志和 traceback。
 - [ ] 待验证：模式 × 全部 verdict × 本人／他人／Admin／匿名矩阵，覆盖 hidden/generated 泄漏。
 - [ ] 待补齐：不 import MiniOJ、不共享数据库或文件的独立 HTTP 验收示例；现有栈冒烟直接 import 并调用 Worker，不能替代。
@@ -218,8 +222,11 @@
 
 ## 已落实决策
 
+- **D3／D6（Phase 3）：** `POST /api/v1/runs` 保持同步成功响应，内部由数据库 CustomRun 队列和唯一 Worker 执行；请求接受 `source_code` 并兼容相同值的旧 `code`。正式提交成功仍为 202；正式提交和 Custom Run 排队容量独立配置，满载为 429 + `Retry-After`，基础设施不可用或 Custom Run 等待 Worker 超时为安全 503；不新增公共轮询路由。
+- **D9（Phase 3 当前部署）：** 仓库 Compose 路径继续使用 `/minioj/`，Nginx 保留前缀、原始 Host 及非标准端口；数据库和 data 宿主挂载目录、HTTP 端口可为隔离部署覆盖。Server 不接 Docker，宿主 Worker 必须指向同一数据库／data；正式环境地址仍由部署者配置。
 - **D8（按新增需求修订）：** 有提交也可编辑和删除。修改增加版本标记，在题目及受影响旧提交上显示 warning；删除为软删除，旧链接显示删除提示、历史成绩保留，题号不复用，不提供自动重判或完整历史题面恢复。删除时 QUEUED 提交结束为 IE，已读取数据的评测继续；generator 检查删除状态及 std checksum。Sample 精确关联及文件原子写入／回滚规则继续有效。
-- **D11（Phase 1 部分）：** 单个输入或生成输出默认上限 16 MiB；std／generator 源码沿用源码上限，单次运行默认 10 秒／512 MiB，单任务最多 50 例，均可配置。保存实际输入／输出 SHA-256；正式 Submission 的编译及逐用例结果保存仍属于 Phase 2。
+- **D7（Phase 2）：** V1 每个 Job 目录单 Worker 独占。中断任务在下次启动时终结为 IE／FAILED，不自动重跑；条件 claim 与条件终态写入避免重复领取和覆盖。
+- **D11（Phase 1–2）：** 单个输入或生成输出默认上限 16 MiB；std／generator 源码沿用源码上限，单次运行默认 10 秒／512 MiB，单任务最多 50 例。保存实际输入／输出 SHA-256、完整 compile_result 及每个已执行用例的受限 metadata；首个 failure 内容继续由后续 Feedback Policy 控制。
 
 ## 待明确事项
 
@@ -229,14 +236,9 @@
 | --- | --- | --- |
 | D1 | 提交完整 schema、未完成字段省略／null、非终态 Feedback HTTP 状态和字段 | Phase 4–5 联调前 |
 | D2 | AC/RE/MLE/OLE/IE、通用 HTTP 错误完整 schema，以及 CE/WA/TLE 示例纳入契约 | Phase 4–5 联调前 |
-| D3 | Custom Run 同步／异步、Worker/Sandbox 调度、失败状态、code 兼容及限制；不预设新轮询路由 | Phase 3–4 |
 | D4 | Feedback 白名单、生效模式告知、权限关系、非法配置处理、内容截断 | Phase 3、5 |
 | D5 | 请求超时、轮询间隔／总期限、提交超时后的去重／查重 | Phase 4–5 联调前 |
-| D6 | 编译／运行／输入／输出／并发／队列具体上限，统计单位、跨 testcase 汇总、统计缺失表达 | Phase 2–4 |
-| D7 | Worker claim 后异常退出的恢复／终态及防重入、重复写入 | Phase 2 |
-| D9 | 正式根路径或代理子路径、外部 URL、持久化路径和 daemon 路径关系；Phase 0 已明确宿主／Compose 注入方式 | Phase 3 |
 | D10 | Token 撤销／硬删除及 metadata 保留，现有 oj_ 前缀兼容 | Phase 4 |
-| D11 | `MINIOJ_JOB_DIR` 与 testcase 上传边界已分别在 Phase 0、1 落实；编译／逐用例结果保存仍待确定 | Phase 2 |
 
 ## 原计划保留与范围调整
 
@@ -245,4 +247,4 @@
 - 本地题目包／Codeforces 导入器、Brute/Stress Test、SSE、多 Worker／外部队列不纳入 V1 Phase 0–5，也不视为完成；C++ generator 已按本轮明确需求纳入 Phase 1 扩展。
 - 原 Mac Coding Agent Harness 开发项移出 MiniOJ TODO。本仓库不含 Agent Loop、模型路由、LLM Provider、Prompt、Agent State、客户端 Workspace 或模型密钥开发任务；/agent/ 只保留为 HTTP 命名空间。
 
-**后续起点：** Phase 0–1 已按上述范围验收。下一轮经明确指示后从 Phase 2 尚未完成项继续，不重建已有骨架；本轮不自动推进。若先恢复当前部署，仍需单独处理 Phase 3 Custom Run 阻塞及 Phase 5 反馈暴露缺口。各阶段仍须有各自完整验收证据。
+**后续起点：** Phase 0–3 已完成并分别保留验收证据；下一阶段为 Phase 4。D1／D2／D5／D10 和 Phase 5 的反馈长度、模式告知及最终白名单仍未落实。本轮不自动进入 Phase 4，不部署正式环境。

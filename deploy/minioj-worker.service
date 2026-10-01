@@ -1,0 +1,17 @@
+[Unit]
+Description=MiniOJ judge worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/github-repos/MiniOJ
+EnvironmentFile=%h/github-repos/MiniOJ/.env
+Environment=PATH=%h/miniconda3/envs/minioj/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/miniconda3/envs/minioj/bin/minioj-worker
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

@@ -140,6 +140,7 @@ pre { overflow: auto; margin: 0; padding: 1rem; border: 1px solid #e2e8f0; borde
 .code-editor { min-height: 440px; border-color: #334253; background: #111c28; color: #e7edf4; font: 13px/1.6 var(--mono); tab-size: 4; }
 .code-editor:focus { border-color: #8ec5ff; box-shadow: 0 0 0 3px rgba(23,74,126,.15); }
 .custom-input { min-height: 100px; margin-top: .35rem; font: 12px/1.5 var(--mono); }
+.sample-select { margin: .35rem 0 .8rem; }
 .result-box { max-height: 300px; overflow: auto; margin-top: 1rem; padding: .9rem; border: 1px solid #ccd4dc; border-radius: 8px; background: #f1f4f8; font: 12px/1.55 var(--mono); white-space: pre-wrap; }
 .result-box.success { border-color: #a7d2bf; background: #e8f6ef; }
 .result-box.error { border-color: #e3b2aa; background: var(--danger-soft); }

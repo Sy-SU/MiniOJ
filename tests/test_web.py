@@ -82,3 +82,8 @@ def test_authenticated_web_pages_render_with_real_data(client):
         page = client.get(path)
         assert page.status_code == 200, path
         assert "MiniOJ" in page.text
+
+    problem_page = client.get("/problems/web-problem")
+    assert 'id="run-sample-button"' in problem_page.text
+    assert 'id="custom-test-button"' in problem_page.text
+    assert 'id="submit-button"' in problem_page.text
