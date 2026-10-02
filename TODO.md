@@ -7,8 +7,9 @@ Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并�
 ## 最终 release hygiene（2026-10-02）
 
 - [x] 已有实现／验收：经本轮明确批准，仅取消 Git 跟踪 `compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig`；本地三个副本原样保留，SHA-256 与处理前一致。全仓代码／部署／测试检查未发现运行依赖，不改写历史、不删除过去提交的版本。
-- [x] 已有实现：`.gitignore` 沿用已有 `*.orig`，`.dockerignore` 同步排除 `*.orig`，防止旧 `runner.py.orig` 随 `COPY src ./src` 进入 Server image；不是业务功能修改。独立 hygiene 提交只包含上述两项文档／配置及三个 Git 删除记录。
-- [ ] 待验证：hygiene 新 HEAD 的完整 hosted CI；最终 production RC SHA 以该 CI 全绿提交为准。正式部署已获本轮授权，但必须先识别实际路径／服务、从该 SHA 构建新 Server／Judge RC 镜像、停止全部写入方并完成一致性备份和回滚点；迁移、production smoke 未完成前不创建 `v1.0.0`。本节以下均保留为此前验收快照。
+- [x] 已有实现／验收：`.gitignore` 沿用已有 `*.orig`；真实合成 BuildKit context 验证发现 Docker 的 `*.orig` 只排除根目录备份，故 `.dockerignore` 同时增加 `**/*.orig` 覆盖任意嵌套层级。不是业务功能修改；首个 hygiene 提交只包含文档／排除规则和三个 Git 删除记录，后续仅修正嵌套排除规则与本记录。
+- [x] Hosted CI：`1dd66bd6d08d37f80fc634d606713afdeb734d9f` 的 [Checks run 37012812152](https://github.com/Sy-SU/MiniOJ/actions/runs/37012812152) completed/success，完整 **725 passed（193.64s），0 failed／0 skipped**；Ruff format／lint、JS 和示例 Compose 全通过。这是嵌套排除补验前的提交，不作为最终部署 SHA。
+- [ ] 待验证：嵌套排除修复后新 HEAD 的完整 hosted CI；最终 production RC SHA 以该 CI 全绿提交为准。正式部署已获本轮授权，但必须先识别实际路径／服务、从该 SHA 构建新 Server／Judge RC 镜像、停止全部写入方并完成一致性备份和回滚点；迁移、production smoke 未完成前不创建 `v1.0.0`。本节以下均保留为此前验收快照。
 
 ## V1 源码 RC 提交与 hosted CI（2026-10-02；源码验收完成）
 
