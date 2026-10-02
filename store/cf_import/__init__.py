@@ -1,0 +1,1 @@
+"""Controlled Codeforces -> MiniOJ importer."""

@@ -1,0 +1,47 @@
+# Paths are relative to the repository root. Run from that root in the minioj env.
+source_dir = "store/codeforces"
+generated_dir = "store/generated/codeforces"
+cache_dir = "store/cf_import/cache"
+state_file = "store/cf_import/state.json"
+
+[codeforces]
+handle = ""
+api_url = "https://codeforces.com/api"
+# Optional endpoint: the same envelope, author fields and pagination as user.status.
+status_url = ""
+status_token_env = "CF_STATUS_TOKEN"
+interval_seconds = 2.1
+statement_interval_seconds = 3.0
+page_size = 1000
+
+[llm]
+base_url = "" # API root ending in /v1 (NOT the /chat/completions endpoint)
+api_key_env = "CF_IMPORT_LLM_API_KEY"
+model = ""
+api_mode = "chat_completions" # or "responses"
+json_mode = true # false for compatible providers lacking JSON mode
+attempts = 3
+repair_attempts = 1
+# Generator/validator and semantic checker each have this separate repair budget.
+timeout_seconds = 180
+
+[minioj]
+base_url = "http://127.0.0.1:8080/minioj"
+token_env = "CF_IMPORT_MINIOJ_TOKEN" # admin user's Bearer token
+poll_seconds = 1
+verification_timeout_seconds = 600
+
+[sandbox]
+image = "minioj-cpp20:latest"
+seed = 20261001
+time_limit_ms = 10000
+memory_mb = 512
+file_limit_bytes = 8388608
+total_limit_bytes = 67108864
+max_tests = 30
+
+# Explicit reference choice if multiple local solutions exist (repo-relative).
+# These still require account AC and sample validation; no filename proves AC.
+[references]
+# "1791C" = "store/codeforces/1791/C.cpp"
+# __Good is a stress-test companion; only override to it after independent verification.
