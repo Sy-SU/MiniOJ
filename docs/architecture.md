@@ -1,10 +1,10 @@
 # MiniOJ 架构与接口约定
 
-更新日期：2026-10-02。依据：独立 OJ 规划、新功能附件、网页体验要求及当前实测。实施任务见 [TODO.md](../TODO.md)。
+更新日期：2026-10-03（发布记录收尾；正式验收日期为 2026-10-02）。依据：独立 OJ 规划、新功能附件、网页体验要求及 V1.0.0 正式发布验收。实施任务见 [TODO.md](../TODO.md)。
 
-本文区分**规划约束／共用约定**、**当前实现**和**验收证据**。已有代码不等于运行验证；Phase 0–5 的实际范围见第 12 节与 TODO，不外推为正式部署通过。Phase 2–3 已推送为 `8d8cafc`；其后脏工作区原样保留并增量开发，不重建骨架。最新 Phase 5 冻结契约见 [codeharness-api.md](codeharness-api.md)，以下早期记录保留为历史。
+本文区分**规划约束／共用约定**、**当前实现**和**验收证据**。已有代码或隔离测试不替代正式部署验收；Phase 0–5 与正式发布各自的范围见第 12 节、TODO 和 [发布验收记录](phase5-validation.md)。最新 Phase 5 冻结契约见 [codeharness-api.md](codeharness-api.md)，早期记录保留为 historical snapshot，不代表 current release status。
 
-当前为 **MiniOJ V1 source RC complete**：Core／可选 CF 工具已按批准范围分开提交并正常推送，CI 测试夹具问题以独立 `40ede95` 修复；[hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 完整 **725 项**及 Ruff／JS／示例 Compose 全绿，最新提交／历史快照／遗留跟踪备注见 [TODO](../TODO.md)。不开发新功能、不改 HTTP 行为；正式上线仍为 READY_WITH_NOTES，未停机迁移／部署、替换正式镜像或创建 tag。公开 `.env.example` 经批准改为 loopback 绑定，实际 `.env` 和 Compose 旧 fallback 不变。
+**当前发布状态：MiniOJ V1.0.0 production released，PRODUCTION_READY。** 正式 Release SHA `65f82f7532ecf8024ad405f7eb1ae877b369914f` 的 [hosted CI 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477) success，**725 passed，0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿。正式备份／两次幂等 migration、同 SHA 的 Server／Judge 镜像部署、production smoke 和 short observation 均通过；Annotated `v1.0.0` 已创建、推送并固定到该 SHA。后续纯文档提交不改变生产 SHA 或移动 tag，本轮不重新部署或修改 HTTP 行为。公开 `.env.example` 的 loopback 示例沿用既有批准；正式 `.env` 字节未变，Compose 旧 fallback 不变。
 
 ## 1. 定位与 V1 边界
 
@@ -99,7 +99,7 @@ Token 当前以 oj_ 开头，随机生成，存 SHA-256 hash 和不可恢复完�
 
 ## 5. 数据模型与存储
 
-字段依据 [models.py](../src/minioj/models.py)。表内“差距”是后续任务，不代表本轮已迁移数据库。
+字段依据 [models.py](../src/minioj/models.py)。模型说明本身不替代数据库迁移验收；V1.0.0 的正式迁移已通过，两次幂等执行和既有记录保留结果见 [发布验收记录](phase5-validation.md)。
 
 | 实体 | 当前主要字段 | 规划映射／差距 |
 | --- | --- | --- |
@@ -460,7 +460,7 @@ V1 默认模式是 `full`。模式和访问权限由 MiniOJ 服务端控制，Co
 
 ### Phase 5 已落实决策
 
-D1／D2 固定字段与全部 verdict model；D4 模式白名单／角色交集及 UTF-8 截断；D5 可选 Idempotency-Key 和 Reference Client 有限退避／超时已实现。保留现有 `submission_id`、嵌套 resources 和 `/agent/.../feedback`，不新增重复别名。正文第 9 节是当前契约，早期例作为兼容片段保留；这些实现与下方隔离验收不表示正式部署已升级。
+D1／D2 固定字段与全部 verdict model；D4 模式白名单／角色交集及 UTF-8 截断；D5 可选 Idempotency-Key 和 Reference Client 有限退避／超时已实现。保留现有 `submission_id`、嵌套 resources 和 `/agent/.../feedback`，不新增重复别名。正文第 9 节是当前契约，早期例作为兼容片段保留；实现与隔离验收本身不替代正式升级证据，正式迁移／部署及低影响 smoke 已另行通过，见顶部发布状态。
 
 ## 8. 共用约定与当前代码差异
 
@@ -550,11 +550,11 @@ Reference Client `scripts/smoke_test_codeharness_api.py` 完全独立标准库 H
 
 日志覆盖 HTTP 错误、登录失败、提交创建、Worker claim、编译／评测开始结束、verdict、恢复及 Sandbox／Worker 异常；提交和构建路径携带各自关联标识。日志不记录源码、Token 或 Secret，对外 IE 类别与内部诊断分开保存和展示。跨服务统一 trace ID 和集中日志仍不在 V1 范围内。
 
-`.github/workflows/ci.yml` 为最小 GitHub Actions：Python 3.12、dev 依赖／Chromium、全仓 Ruff format/lint、`python -m pytest -ra`、应用 JS 和示例 Compose 静态解析。无真实 Secret，普通 CI 不跑 Docker Judge；真实 Docker integration 留在单独 smoke。首次 hosted run 的四个虚拟域名重定向测试失败以仅测试夹具的 fix 修复，`40ede95` 的 [完整 hosted CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 已实际通过 **725 项**；不把此结果扩大为正式部署或新的 Docker integration。
+`.github/workflows/ci.yml` 为最小 GitHub Actions：Python 3.12、dev 依赖／Chromium、全仓 Ruff format/lint、`python -m pytest -ra`、应用 JS 和示例 Compose 静态解析。无真实 Secret，普通 CI 不跑 Docker Judge；真实 Docker integration 留在单独 smoke。历史源码 RC 首次 hosted run 的四个虚拟域名重定向测试失败以仅测试夹具的 fix 修复，`40ede95` 的 [完整 hosted CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 通过 **725 项**；最终 Release SHA 的 [CI 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477) 同样 **725 passed，0 failed／0 skipped**。CI 与正式部署／Docker integration 是分别记录的验收，不能相互替代。
 
 `scripts/backup_restore.py` 离线快照：维护窗口停止所有 Web/Worker/导题/CLI 写入，整个 SQLite 目录（含 WAL/SHM/journal）与整个 data（tests/assets/avatars）一致复制；私密配置、匹配代码／Judge image 另存，不把源码/Secret 回显。只创建新 0700 目录，拒绝既有目标／重叠／symlink，检查 integrity/外键/文件摘要和源变化；不自动停机、启动、覆盖或删除。恢复只能到新隔离目录，校验后用匹配版本启动并新提交 AC；失败留下本次不完整目录供检查。临时 job 非恢复必需，遗留任务沿用既有安全中断语义。README 双语有操作步骤。
 
-`smoke_test_phase5.py --all-verdicts` 仅在自建临时库/数据中执行 backup → restore → 真实 HTTP Reference Client 根/子路径 → Worker/Docker AC，以及八种 verdict、cleanup 和原快照再恢复；该隔离验收不表示正式恢复。现有 restart/Compose/Nginx/systemd 保留，无新配置键、不改正式服务。
+`smoke_test_phase5.py --all-verdicts` 仅在自建临时库/数据中执行 backup → restore → 真实 HTTP Reference Client 根/子路径 → Worker/Docker AC，以及八种 verdict、cleanup 和原快照再恢复；该隔离脚本不操作正式库，也不表示执行了正式回滚。V1.0.0 的正式备份可读性验证与 production smoke 单独记录；本次文档收尾不新增配置键、不修改或重启正式服务。
 
 ## 11. 决策状态
 
@@ -575,9 +575,17 @@ Reference Client `scripts/smoke_test_codeharness_api.py` 完全独立标准库 H
 
 ## 12. 实施与验证边界
 
+### 当前正式发布验收（2026-10-02；Phase 0–5 已完成）
+
+MiniOJ V1.0.0 production released，PRODUCTION_READY。正式 Release SHA／Annotated tag 和最终 hosted **725 passed** 见本文顶部；实际 Server `minioj-server:v1.0.0-rc1-65f82f7`、Judge `minioj-cpp20:v1.0.0-rc1-65f82f7` 对应同一 SHA，Server／Nginx healthy、宿主 Worker 使用新 Judge。
+
+正式停写备份与新目录恢复验证通过；两次 `minioj init-db` 幂等，Users **5 → 5**、Problems **179 → 179**、Submissions **391 → 391**、Contests **3 → 3**，integrity **ok**、foreign key violations **0**。Production smoke 覆盖 health／Web／真实 Chromium 登录、API 身份／分页／排序／旧数组兼容、AC／CE／Feedback／Custom Run、Contest／Admin 只读及 hidden-data boundary。短时观察无持续 5xx／infrastructure error，Worker 空闲边界清理通过；不是长期 SLA 或安全认证，未在正式环境重跑破坏性 stress。
+
+Rollback 未触发；verified backup、previous Server／Judge images、旧 Worker 包／配置的 rollback point 保留可用，正式 `.env` 未变化，旧运行 Git SHA 无法确认。三个 `.orig` 已取消跟踪、保留本地与历史，Git／Docker context 忽略且最终 Server image 不含 `.orig`。完整本地 report 保留在部署主机，公共文档不依赖私有路径／凭证；详情见 [发布验收记录](phase5-validation.md)。
+
 ### Phase 5 交付验收快照（2026-10-02；RC 审计前）
 
-以下 722 项及镜像一致性是该轮快照，最新 RC 验收见 TODO 顶部。本轮补齐 OpenAPI 声明后 `server/api.py` 已不同于下述旧验收镜像；不将旧镜像称为当前全部源码一致，不为审计无必要重建或部署。
+以下 722 项及镜像一致性是该轮 historical snapshot，最新正式发布验收见本文顶部。该轮补齐 OpenAPI 声明后 `server/api.py` 曾不同于下述旧验收镜像；不将旧镜像称为后续源码全部一致，也不将当时“未迁移／待 CI”等边界误作当前状态。
 
 最新范围为 Phase 5＋公开题库分页／排序；在全部已有脏工作区上增量实现。最终完整 `python -m pytest -ra --tb=short` **722 passed（683.12s），0 failed／0 skipped**；全仓 Ruff **116 文件**、8 个应用 JS、示例 Compose、systemd unit、差异与 CI YAML 解析通过。八种 verdict × 三模式 × owner/other/admin/system/匿名、三种 pending、最终 JSON/HTML/History/error body sentinel、UTF-8／诊断脱敏、并发 Idempotency 和旧库升级均有本轮自动化证据。新增分页真实 HTTP Chromium 覆盖根／子路径 × 桌面／手机 × JS 开关 8 组，排序／翻页／字面量搜索在 SQL 和无 JS 下工作。
 
@@ -585,9 +593,11 @@ Reference Client `scripts/smoke_test_codeharness_api.py` 完全独立标准库 H
 
 标准 Dockerfile 从官方 Python 基础镜像无应用缓存重新安装全部依赖，保留独立验收 tag `minioj-phase5-server:20261002-contract`／镜像 ID `sha256:04b00e04c21f0b9839a40b1b609d8239e348f39d9068d6414970c7cc59733771`。只读无网络容器检查无 `.env`／数据库／用户题库／头像／代理环境残留；最终核对实际安装的 11 个 Phase 5 Python 模块、题库模板和样式共 13 个 SHA-256 与当前源码一致。该镜像已完成独立 Nginx／Server／宿主 Worker，旧机器客户端和新 Reference Client 根／子路径 AC、真实浏览器源码编辑／复制／Sample／Custom Run／AC/CE/TLE、Docker 故障 503、health 和清理。本次未重新指定 Polygon 包，不把历史包实测外推为本轮重跑。
 
-仅升级自建测试库；未迁移正式库、部署／重启正式服务、替换正式镜像 tag 或 commit/push。独立构建器／缓存／socket／配置和测试目录清理，默认共享代理未更改；验收镜像保留。GitHub 托管 CI 未执行，需授权提交／推送后首跑；正式协调停机／备份／迁移须单独安排。版本、命令和工作区状态见 [phase5-validation.md](phase5-validation.md)、[TODO](../TODO.md)。以下章节是各轮历史证据，“未推进 Phase 5”等只描述当时范围。
+该交付轮次当时仅升级自建测试库；未迁移正式库、部署／重启正式服务、替换正式镜像 tag 或 commit/push。独立构建器／缓存／socket／配置和测试目录清理，默认共享代理未更改；验收镜像保留。当时 GitHub 托管 CI 未执行，需授权提交／推送后首跑，正式协调停机／备份／迁移须单独安排；这些发布步骤后来已完成，见当前正式验收。各轮版本、命令和工作区状态见 [phase5-validation.md](phase5-validation.md)、[TODO](../TODO.md)。以下章节保留历史证据，“未推进 Phase 5”等只描述当时范围。
 
 ### 历史验收
+
+历史开发边界：Phase 2–3 已推送为 `8d8cafc`；其后脏工作区原样保留并增量开发，不重建骨架。这是当时的开发基线，不是最终正式 Release SHA。
 
 2026-10-02 Contest 增量已实现并验收：新增 51 项覆盖加权 Performance 四题全部 16 种结果、难题同数量更高／多解题单调、空／null／极端值、三角色 × 三时间状态、CSRF、列表原子性／100 与 101 题、新提交关联／已有入队保留、增删／重加／当前重判／practice／history／pending 隔离、排名不受 Performance 影响及 JSON／OpenAPI。真实 HTTP Chromium 涵盖 admin/system × 根／子路径 × 桌面／390px 手机和无 JS 回退，截图实检；最终全量 `python -m pytest -ra` **622 passed（505.58s）**，Ruff 全仓 **107 文件**、8 个 JS、Compose／差异及离线 wheel 打包通过。真实 Docker 管理冒烟通过 WA／AC 双向重判与 Performance JSON、比赛实时增删／排序／重加、原提交／历史保留、个人 solved 独立、CE → AC 和临时资源清理。
 
@@ -599,7 +609,7 @@ Reference Client `scripts/smoke_test_codeharness_api.py` 完全独立标准库 H
 
 构建 context 新增排除运行时头像／题库，沿用 DB／Job／`.env` 排除；保留磁盘原数据和 bind 挂载。无网络容器检查确认新静态资源／模块打包、无个人数据及代理环境残留。默认 Docker daemon 失效代理未修改；使用独立临时 BuildKit、只读公共 CA、私有 Unix socket 和临时配置通过宿主可用代理完成构建，随后清理构建器／缓存／配置，保留验收镜像。未自动 commit/push、未应用正式库迁移／部署、未推进 Phase 5；正式升级仍需 README 中协调停机／备份／迁移，不能混跑旧角色逻辑。详细命令与证据见 [TODO](../TODO.md)。
 
-Phase 0–5 的目标、依赖、可勾选任务、交付物和验收标准统一维护在 [TODO.md](../TODO.md)。Phase 0–4 已分别验收；这些证据不能外推为 Phase 5 或正式环境部署通过。
+Phase 0–5 的目标、依赖、可勾选任务、交付物和验收标准统一维护在 [TODO.md](../TODO.md)。下方 Phase 0–4 各轮证据不能单独外推为 Phase 5 或正式环境部署通过；Phase 5 与正式发布已另有完成证据，不改写早期阶段边界。
 
 Phase 0 在 2026-10-01 使用 Conda `minioj` 环境（Python 3.12.14、Ruff 0.16.9、pytest 8.4.2）通过 `ruff format --check .`（42 个文件）、`ruff check .`、138 项 pytest、`docker compose config --quiet`、.env 忽略／未跟踪检查和 `git diff --check`。另在 /tmp 隔离目录连续两次执行 `minioj init-db`，再以回环 Uvicorn 确认首页、healthz 和静态 CSS 均为 HTTP 200；临时服务和目录已清理。升级测试覆盖旧 Token preview 保留、用户名大小写索引幂等和冲突拒绝，配置测试覆盖独立 Job 目录和 Secret 拒绝／脱敏。
 

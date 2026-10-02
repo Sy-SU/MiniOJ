@@ -1,17 +1,32 @@
 # MiniOJ 实施与验收 TODO
 
-更新日期：2026-10-02。依据：独立 OJ 规划、新功能附件、网页体验、Contest 增量、Phase 5＋题库分页及最新 V1 Release Candidate 审计附件。架构和协议见 [docs/architecture.md](docs/architecture.md)、[冻结契约](docs/codeharness-api.md)。
+更新日期：2026-10-03（发布记录收尾；正式验收日期为 2026-10-02）。依据：独立 OJ 规划、新功能附件、网页体验、Contest 增量、Phase 5＋题库分页及 V1.0.0 正式发布验收。架构和协议见 [docs/architecture.md](docs/architecture.md)、[冻结契约](docs/codeharness-api.md)。
 
-Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。经用户授权，完整累积实现已分为 Core `a02bd86` 与 CF 工具 `18f94c3` 两个提交并正常推送 `origin/main`；首次 hosted CI 发现的测试夹具问题由独立 fix `40ede95` 修复。该提交的完整 hosted CI **725 passed，0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿，当前为 **MiniOJ V1 source RC complete**；正式上线仍为 READY_WITH_NOTES。未部署／迁移正式环境、替换正式镜像或创建 tag；全部用户数据保留。下方“未 commit/push”等均为各轮历史边界，以顶部最新证据为准。
+**当前发布状态：MiniOJ V1.0.0 production released，PRODUCTION_READY。** Phase 0–5 与题库分页／排序均已完成。正式 Release SHA 为 `65f82f7532ecf8024ad405f7eb1ae877b369914f`；Annotated tag `v1.0.0` 已创建、推送并确认指向该 SHA。后续纯文档提交可以推进 `main`，不会改变生产 Release SHA 或移动该 tag。
 
-## 最终 release hygiene（2026-10-02）
+## V1.0.0 正式发布记录（2026-10-02；当前发布状态）
+
+- [x] Release／Hosted CI：最终 `65f82f7` 的 [Checks run 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477) completed/success，完整 **725 passed（183.35s），0 failed／0 skipped**；Ruff format／lint、8 个应用 JS 和示例 Compose 全绿。
+- [x] 正式部署：Server `minioj-server:v1.0.0-rc1-65f82f7`、Judge `minioj-cpp20:v1.0.0-rc1-65f82f7` 均从该 committed SHA 构建并验收；实际 Server／Nginx healthy，宿主 Worker 使用新 Judge。完整镜像摘要见 [发布验收记录](docs/phase5-validation.md)。
+- [x] 一致性备份／恢复：停止全部 Web／Worker／导题／CLI 写入方后，备份整个数据库目录和全部 data；8012 文件、manifest、SQLite integrity／foreign keys 及新目录恢复可读性验证通过，verified backup 保留。
+- [x] 正式 migration：连续两次 `minioj init-db` 均成功、幂等；Users **5 → 5**、Problems **179 → 179**、Submissions **391 → 391**、Contests **3 → 3**。既有记录保留，SQLite integrity **ok**、foreign key violations **0**。这是停写窗口的迁移计数，非恢复服务后的实时总数。
+- [x] Production smoke：health 200、Web／static／Chromium 真实登录、API 身份／分页／排序／旧列表兼容通过；提交 **392：14/14 AC（CPU 19 ms）**、**393：预期 CE**，Feedback／Custom Run、Contest standings／Performance 只读、Admin 只读及 hidden-data boundary 均通过。
+- [x] Production short observation：三次短时观察及启动后日志复核通过；无 5xx／持续 infrastructure error／重复 smoke 提交，Worker 空闲边界无遗留 owner container／Job。不是长期 SLA、稳定性或安全认证；生产环境未重跑破坏性 Sandbox stress。
+- [x] Rollback／数据保留：rollback 未触发；verified backup、previous Server／Judge images、旧 Worker 包及配置组成的 rollback point 保留可用，正式 `.env` 字节未变。旧运行 Git SHA 无法确认，不猜测；恢复服务后的正常用户提交和外部导题增量均保留。
+- [x] 发布资料：完整本地 release report 已保留在部署主机，不提交该 report、凭证、私有路径、源码或 hidden testcase 内容。本轮只同步文档，不重新 migration／部署／smoke，不修改 README 或 `v1.0.0`。
+
+## 最终 release hygiene（2026-10-02；已完成）
 
 - [x] 已有实现／验收：经本轮明确批准，仅取消 Git 跟踪 `compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig`；本地三个副本原样保留，SHA-256 与处理前一致。全仓代码／部署／测试检查未发现运行依赖，不改写历史、不删除过去提交的版本。
 - [x] 已有实现／验收：`.gitignore` 沿用已有 `*.orig`；真实合成 BuildKit context 验证发现 Docker 的 `*.orig` 只排除根目录备份，故 `.dockerignore` 同时增加 `**/*.orig` 覆盖任意嵌套层级。不是业务功能修改；首个 hygiene 提交只包含文档／排除规则和三个 Git 删除记录，后续仅修正嵌套排除规则与本记录。
 - [x] Hosted CI：`1dd66bd6d08d37f80fc634d606713afdeb734d9f` 的 [Checks run 37012812152](https://github.com/Sy-SU/MiniOJ/actions/runs/37012812152) completed/success，完整 **725 passed（193.64s），0 failed／0 skipped**；Ruff format／lint、JS 和示例 Compose 全通过。这是嵌套排除补验前的提交，不作为最终部署 SHA。
-- [ ] 待验证：嵌套排除修复后新 HEAD 的完整 hosted CI；最终 production RC SHA 以该 CI 全绿提交为准。正式部署已获本轮授权，但必须先识别实际路径／服务、从该 SHA 构建新 Server／Judge RC 镜像、停止全部写入方并完成一致性备份和回滚点；迁移、production smoke 未完成前不创建 `v1.0.0`。本节以下均保留为此前验收快照。
+- [x] 最终验收：嵌套排除修复后的 `65f82f7532ecf8024ad405f7eb1ae877b369914f` 完整 [hosted CI 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477) **725 passed，0 failed／0 skipped**。最终 Server image 不含 `.orig`；备份、正式迁移／部署、production smoke／观察及 `v1.0.0` 已完成，详见顶部当前发布记录。
 
-## V1 源码 RC 提交与 hosted CI（2026-10-02；源码验收完成）
+## V1 源码 RC 提交与 hosted CI（2026-10-02；历史源码验收快照）
+
+本节及其后的 RC 审计、交付轮次和 Phase 0–4 记录均为 historical snapshot，保留当时事实；其中“未部署／待验证／source RC／READY_WITH_NOTES”不代表 current release status。当前发布以顶部正式记录和下方 Phase 5 完成状态为准。
+
+历史阶段提交：Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 为 `8d8cafc`；之后累积 Core／CF 工具分别为 `a02bd86`／`18f94c3`，首次 hosted CI 的测试夹具问题由独立 `40ede95` 修复，见下列原始证据。
 
 - [x] 已提交／推送：`a02bd86b74e116b8d157dbcc43bb083c4fbfa0ce` — `feat: prepare MiniOJ V1 release candidate`，139 文件、20,479 insertions／636 deletions；`18f94c31c10d05cbc48e298ff8762066beb12d12` — `feat: add isolated Codeforces import tooling and reference selection`，26 文件、4,155 insertions／0 deletions。逐文件 allowlist staging、staged stat／name-status／check 通过，不强拆共享文件，不 force／amend／改写历史。
 - [x] 推送实测：初始远端／工作区基线 `8d8cafce30754ba6d5cb6c41f8e4dc417a901116`；首次 push 前 HEAD 与 push 后 `origin/main` 均为 `18f94c31c10d05cbc48e298ff8762066beb12d12`，推送前后 `git status --short` 为空。
@@ -20,10 +35,10 @@ Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并�
 - [x] 原因／最小修复：四个 legacy `/admin` 浏览器组合把 TestClient 的 303 原样交给 Chromium，随后对虚拟 `testserver` 的重定向产生 DNS 依赖，报 `ERR_NAME_NOT_RESOLVED`。仅修改 `test_problem_pages.py` 的请求拦截夹具，在 TestClient 内跟随重定向；新增根／子路径 303＋Location＋目标 Dashboard 断言，不修改应用、HTTP、DNS／proxy、依赖或跳过测试。共享夹具相关 `test_problem_pages.py`／`test_submission_results.py` **70 passed（62.00s）**，Ruff／format／diff check 通过。
 - [x] 已提交／推送独立修复：`40ede9585a057760d463d154c8fea186ef195fee` — `fix: resolve browser fixture redirects inside isolated client`，2 文件、29 insertions／7 deletions；push 前 HEAD／push 后远端 main 为该 SHA，工作区干净，未 amend 之前两个提交。
 - [x] Hosted CI 验收通过：[Checks run 37008639747](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747)，绑定 `40ede9585a057760d463d154c8fea186ef195fee`，push／attempt 1，**completed / success**，2026-10-02 12:49:34 UTC 完成。完整 `python -m pytest -ra` **725 passed（178.42s），0 failed／0 skipped**；包含原 723＋新增 2。Ruff format **117 文件**／lint、8 个应用 JS、示例 Compose 均实际执行通过；不是仅凭 workflow 文件或本地检查勾选。
-- [x] 当前状态：**MiniOJ V1 source RC complete**，不是 production deployed。源码／测试以已验证的 `40ede95` 为基准，后续仅同步发布文档，不宣称旧验收镜像与当前字节全部一致。runner 另有 action Node 20 弃用警告，但实际强制 Node 24 且步骤成功，本次不为非阻塞警告扩大 workflow 改动。
+- [x] 当时状态：**MiniOJ V1 source RC complete**，不是 production deployed。该阶段源码／测试以已验证的 `40ede95` 为基准，不是最终正式 Release SHA；不宣称旧验收镜像与后续源码字节全部一致。runner 另有 action Node 20 弃用警告，但实际强制 Node 24 且步骤成功，该阶段未为非阻塞警告扩大 workflow 改动。
 - [x] 遗留跟踪边界（本轮已关闭）：三个 `.orig` 从旧远端基线就已跟踪，Core／CF 提交未改动它们；本轮按明确批准仅取消跟踪、保留磁盘和原历史，详见顶部 hygiene 记录。
 
-后续需从 committed SHA 构建 RC image、协调停止全部写入方并做一致性备份、migration、deployment、production smoke／验证／回滚预案；完成正式部署验证后才考虑最终 `v1.0.0`。可以建议 `v1.0.0-rc1`，本轮不自动创建任何 tag，也不执行这些正式操作。下方发布审计及更早阶段保留为提交前历史快照。
+该源码 RC 阶段当时的后续计划：从 committed SHA 构建 RC image、协调停止全部写入方并做一致性备份、migration、deployment、production smoke／验证／回滚预案；完成正式部署验证后才考虑最终 `v1.0.0`。当时可以建议 `v1.0.0-rc1`，该轮未创建任何 tag，也未执行这些正式操作。下方发布审计及更早阶段保留为提交前历史快照；这些发布步骤后来已完成，见顶部。
 
 ## V1 Release Candidate 发布审计（2026-10-02；提交前快照）
 
@@ -420,6 +435,8 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 
 ## Phase 5：CodeHarness 协议与最终验收
 
+**当前状态：已完成，随 MiniOJ V1.0.0 正式发布，PRODUCTION_READY。** 最终 Release SHA／CI、正式备份／迁移／部署／smoke／短时观察及 tag 见顶部；之前轮次的隔离测试记录仍按原范围保留。
+
 **目标：** 独立远程客户端仅经 HTTP、Bearer 和 JSON 获取清洗题目、提交、轮询及结构化反馈。
 
 **依赖：** Phase 4；联调前解决必要协议决策。CodeHarness 仅为远程客户端，本阶段不开发其内部逻辑。
@@ -438,9 +455,10 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 - [x] 已有实现：题库 Web 50 题 SQL 分页／难度双向排序／字面量搜索，无 JS 可用；API 显式 page 才分页，保留数组兼容；边界／实际 HTTP 浏览器验收通过。
 - [x] 已有实现：中英文 README、architecture、冻结契约及本轮命令／证据同步；未实现范围不冒充完成。
 - [x] 已有实现：最小无 Secret CI、停止全部写入方的 SQLite 整目录＋全部 data 备份／新目录恢复工具；不删除 `.orig` 或既有数据。
-- [x] 验收通过：发布审计本地全仓 **723 项 pytest**／静态检查，以及发布后 `40ede95` 的完整 hosted CI **725 passed**；Docker 八 verdict／backup → restore → AC、干净镜像独立 Nginx 和镜像字节核对保留为提交前快照，不外推为当前正式镜像全部源码一致。见顶部和验收记录。
-- [x] 验收通过：GitHub 托管 CI 首跑问题已用最小独立 fix 修复，最新完整 [Checks run 37008639747](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 全绿；不代表正式升级／部署。
-- [x] 验收通过：下列功能／安全／资源矩阵所列本地自动化与受控 Docker 范围；版本、步骤、结果与清理已记录，不代表正式上线。
+- [x] 验收通过：提交前本地 **723 项 pytest**、`40ede95` 的 hosted **725 passed** 保留为历史；最终 Release SHA `65f82f7` 的完整 hosted CI **725 passed，0 failed／0 skipped**。旧 Docker 八 verdict／backup → restore → AC、独立 Nginx 及旧镜像核对仍是对应阶段快照，不将其扩大为正式环境八 verdict 重跑。
+- [x] 验收通过：GitHub 托管 CI 首跑问题以最小独立 fix 修复；最终 [Checks run 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477) 全绿。CI 与正式部署分别有证据，不相互替代。
+- [x] 验收通过：正式停写／一致性备份／新目录恢复验证、两次幂等 migration、同 SHA 新镜像部署、production AC／CE／API／Web／反馈及权限 smoke、Worker 清理和短时观察；`v1.0.0` 已创建、推送并固定到实际部署 SHA。
+- [x] 验收通过：下列功能／安全／资源矩阵所列自动化与受控 Docker 范围，加上顶部正式发布验收；未进行生产 stress、完整渗透测试或长期 SLA 验证。
 
 **交付物：** 独立客户端协议、统一反馈策略、完整文档和最终验收记录。
 
@@ -452,7 +470,7 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 
 ## 最终安全与资源验收矩阵
 
-下表自动化范围已随发布审计本地 **723 项**及发布后 hosted CI **725 项**回归覆盖；八 verdict／backup→restore HTTP smoke、独立 Nginx／standalone Sandbox／Worker fault 的真实证据保留为提交前交付快照，不冒充发布后的 Docker 重跑。仅勾选所述范围，不等价于渗透测试认证、当前镜像全部字节一致或正式部署。正式升级仍待独立授权和验收。
+下表自动化范围已随发布审计本地 **723 项**及最终 Release SHA 的 hosted CI **725 项**回归覆盖；八 verdict／backup→restore HTTP smoke、独立 Nginx／standalone Sandbox／Worker fault 的真实证据保留为提交前交付快照，表中的受控 Docker 测试不冒充正式环境重跑。正式备份／迁移／部署及 AC／CE／反馈／权限 smoke 已另行通过，见顶部；不等价于渗透测试认证、生产 stress 或长期 SLA。
 
 | 范围 | 验收通过的实际证据 | 阶段 |
 | --- | --- | --- |
@@ -497,4 +515,4 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 - Polygon 本地 ZIP 导入已按本轮明确要求纳入 Phase 1／3 扩展；内置 Codeforces 在线抓取、Brute/Stress Test、SSE、多 Worker／外部队列仍不纳入 V1 Core。仓库可选 `store/cf_import` 是另行授权的独立导题工具，不成为 Core 或 Reference Client 的依赖；用户题解／缓存／生成 evidence 不进入源码提交。C++ generator 保持 Phase 1 扩展范围。
 - 原 Mac Coding Agent Harness 开发项移出 MiniOJ TODO。本仓库不含 Agent Loop、模型路由、LLM Provider、Prompt、Agent State、客户端 Workspace 或模型密钥开发任务；/agent/ 只保留为 HTTP 命名空间。
 
-**后续起点：** Phase 0–5 与题库分页／排序已提交、推送并通过完整 hosted CI，当前为 MiniOJ V1 source RC complete；正式上线仍为 READY_WITH_NOTES，须单独授权 committed SHA 镜像构建、协调停写／一致性备份、迁移／部署／production smoke 和最终 tag。3 个旧历史已跟踪 `.orig` 的取消跟踪选择、原缺失 Polygon 截图包及 V1 范围外功能保持顶部列明状态，不擅自删除文件、改写历史或扩大任务。
+**后续起点：** MiniOJ V1.0.0 production released，PRODUCTION_READY；Phase 0–5 与题库分页／排序已完成，正式 Release SHA 和 `v1.0.0` 固定为 `65f82f7532ecf8024ad405f7eb1ae877b369914f`。三个 `.orig` 已取消跟踪且保留磁盘／历史。README 待用户另行要求后整理；原缺失 Polygon 截图包及 V1 范围外功能仍保持原边界，不是本次发布阻塞。新的功能、运维变更或后续发布需独立授权；本次文档收尾不重新部署、迁移或移动 tag。

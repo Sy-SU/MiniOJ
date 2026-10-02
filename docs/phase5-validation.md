@@ -1,8 +1,78 @@
 # Phase 5 implementation and validation — 2026-10-02
 
-本文保留 Phase 5 交付轮次的历史快照（722 项及当时镜像摘要匹配）和提交前发布审计 **723 passed（624.25s）**，不替代最新提交状态。当前为 **MiniOJ V1 source RC complete**：Core／可选 CF 工具已分开提交并推送，测试夹具独立修复 `40ede95` 的 [hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) **725 passed（178.42s），0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿；完整 SHA／命令／首跑失败原因见 [TODO.md](../TODO.md) 顶部。正式上线仍为 READY_WITH_NOTES，未操作正式数据库、服务、镜像或 tag。
+## Current release status — MiniOJ V1.0.0 production released
 
-提交前 RC 审计只补 OpenAPI 既有分页响应头声明、迁移保留回归、忽略规则及文档，并重跑八 verdict／backup→restore HTTP smoke。其旧镜像 166 文件核对为 165 一致、仅 API 元数据不同，是之后 vendor 行尾空白规范化和 CI 测试修复前的快照，不将旧镜像称为当前全部字节一致；正式 RC image 仍须从 committed SHA 单独构建和验收。以下“未 commit/push”等仅描述当时交付边界。
+| 发布事实（2026-10-02） | 已完成的实际结果 |
+| --- | --- |
+| Version | `v1.0.0` |
+| Production Release SHA | `65f82f7532ecf8024ad405f7eb1ae877b369914f` |
+| Hosted CI | [Checks run 37014381477](https://github.com/Sy-SU/MiniOJ/actions/runs/37014381477)，completed / success；绑定上述 Release SHA |
+| 完整回归 | **725 passed（183.35s），0 failed／0 skipped**；Ruff format 117 文件／lint、8 个应用 JS、示例 Compose 均通过 |
+| Production migration | passed；连续两次 `minioj init-db` 成功且幂等 |
+| Production smoke | passed；范围见下表 |
+| Production short observation | passed；短时观察，不是长期稳定性承诺 |
+| Annotated Git tag | `v1.0.0` 已创建、推送；本地及远端解析均指向上述 Release SHA |
+| Final verdict | **PRODUCTION_READY** |
+
+Phase 5 当前已完成。MiniOJ 冻结的远程求解流程为 **Problem → Submission → Poll → Feedback**，仅通过 HTTP／Bearer Token／JSON；不开发 CodeHarness 的 Agent Loop、LLM Provider、model routing、prompt／agent state、experiment scheduler 或 workspace management。本轮只收尾发布文档：后续文档提交可以推进 `main`，不会改变生产 Release SHA、移动 `v1.0.0` 或重新部署。
+
+### 正式镜像与部署
+
+以下镜像均从最终 committed Release SHA 构建、验收并实际用于正式部署，与下方早期验收镜像区分；没有推送镜像 Registry。
+
+| 镜像 | 正式部署 tag | 本地 image ID／manifest digest |
+| --- | --- | --- |
+| Server | `minioj-server:v1.0.0-rc1-65f82f7` | `sha256:dbff843851449bf94639bbfe2a25c11557620f415920d67d9f607289c0ef419c` |
+| Judge | `minioj-cpp20:v1.0.0-rc1-65f82f7` | `sha256:2dd782f100398c9c3c95fc8af447d534e4a1b05bb3db33b3bcf0b330352ad80c` |
+
+最终 Server 实际安装的 165 个源码／资源文件与 Release SHA 一致，无缺失／多余／不同文件，也没有 `.env`、运行数据或 `.orig`。构建使用未改的标准 Dockerfile／官方基础镜像；最终构建在应用／构建输入一致性核对后复用同轮次依赖层，不是 `FROM` 旧应用镜像。正式 Server／Nginx healthy，宿主 Worker ready 并选择新 Judge；Web 无 Docker CLI／socket。验收通过后默认 `minioj-server:latest`／`minioj-cpp20:latest` 已指向上述镜像，原镜像另存回滚别名。
+
+### 正式备份与迁移
+
+协调停止所有 Web／Worker／导题／CLI 写入方后，一致复制整个数据库目录与全部 data（测试／题面图片／头像／Job）；manifest 共 **8012 文件**，摘要复核、新目录恢复可读性、SQLite integrity 和 foreign keys 均通过。停写后没有 WAL／SHM 残留文件；目录整体备份没有按扩展名遗漏数据库文件。Verified backup 及完整本地 release report 已保留在部署主机，不提交私有 report、凭证或主机绝对路径。
+
+正式数据库连续两次执行 `minioj init-db`，均返回 0，既有 schema 已是当前版本，两次为幂等执行；每次均核对所有既有业务记录完整保留。
+
+| 记录 | 停写后／迁移前 | 两次迁移后 |
+| --- | --- | --- |
+| Users | 5 | 5 |
+| Problems | 179 | 179 |
+| Submissions | 391 | 391 |
+| Contests | 3 | 3 |
+
+SQLite integrity：**ok**；foreign key violations：**0**。上述是正式停写窗口内的迁移对照，不是实时统计；smoke 仅新增两次正式提交，恢复服务后的正常用户提交与外部 CF 导题增量全部保留，不误作迁移数量异常。
+
+### Production smoke 与 short observation
+
+| 验收项 | 正式环境实际范围／结果 |
+| --- | --- |
+| Health | `/healthz` HTTP 200 |
+| Web／static／Chromium login | 首页、静态资源、登录、题库正常；既有 system／普通账号通过真实密码／CSRF Session 登录；真实 Chromium 无页面脚本错误 |
+| API identity | 普通 Bearer 身份、feedback mode 和显式 schema 通过 |
+| Problem pagination／sorting | 每页 50、默认／难度双向 null-last、浏览器翻页通过 |
+| Old problem-list API compatibility | 无 page 的旧数组及默认创建时间倒序保留 |
+| Submission AC | **392：14/14 AC，CPU 19 ms**；实际 Worker claim／新 Judge 路径通过 |
+| Submission CE | **393：预期 CE**；未为 smoke 额外创建 WA |
+| Feedback | AC／CE HTTP 200，固定核心字段／模式及安全诊断通过 |
+| Custom Run | `ok`，OK／2 ms，不创建正式 Submission |
+| Contest read-only | 3 场比赛列表、standings／整数 Performance；无比赛修改 |
+| Admin read-only | Dashboard、submissions、users／problems navigation；无管理写操作 |
+| Hidden-data boundary | 普通身份无 hidden/generated 预览及 std／generator／checker 源码；跨用户提交 404，Secret／Token／内部路径不泄漏 |
+| Worker cleanup | 空闲边界无遗留 Worker owner container／Job；共享导题临时目录按各自 owner／活动归属区分 |
+| Short observation | 三次观察（21.22s）及部署启动后日志复核：无 5xx／持续 infrastructure error／重复 smoke 提交，队列无异常积压 |
+
+这只是一次低影响生产验收与短时观察，不是长期 SLA、长期稳定性或安全认证。正式环境没有运行 fork bomb、大内存攻击、完整八 verdict／Sandbox stress 或 destructive action；那些较广范围的受控测试证据仍属于下方历史隔离验收。
+
+### Rollback 与 `.orig` hygiene
+
+- Rollback **未触发**。Verified backup、previous Server／Judge images、原配置及从实际旧镜像保留的 Worker 包组成的 rollback point 保留可用；正式 `.env` 字节未变化。旧镜像保留为 `minioj-server:pre-v1-65f82f7`／`minioj-cpp20:pre-v1-65f82f7`。旧运行 Git SHA 无法确认，不猜测；恢复演练只验证备份到新目录，不声称执行了正式回滚。
+- `compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig` 已取消 Git 跟踪，本地副本／摘要及过去提交的历史均保留。`.gitignore` 沿用 `*.orig`；`.dockerignore` 同时有 `*.orig` 与 `**/*.orig`，真实 BuildKit context 验证覆盖根目录和任意嵌套备份。最终 Server image 不含 `.orig`，没有 history rewrite／amend／force push。
+
+## Historical snapshots — source RC 与发布前交付验收
+
+以下是 historical snapshot，不是 current release status：保留 Phase 5 交付轮次的 **722 项**及当时镜像摘要匹配、提交前审计 **723 passed（624.25s）**，以及源码 RC `40ede95` 的 [hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) **725 passed（178.42s），0 failed／0 skipped**。该源码 RC 阶段当时为 **MiniOJ V1 source RC complete**，正式上线仍为 READY_WITH_NOTES，尚未操作正式数据库、服务、镜像或 tag；这些边界后来已由顶部正式发布证据关闭。
+
+提交前 RC 审计只补 OpenAPI 既有分页响应头声明、迁移保留回归、忽略规则及文档，并重跑八 verdict／backup→restore HTTP smoke。其旧镜像 166 文件核对为 165 一致、仅 API 元数据不同，是之后 vendor 行尾空白规范化和 CI 测试修复前的快照，不将旧镜像称为后续源码全部字节一致；当时正式 RC image 仍须从 committed SHA 单独构建和验收，后来已完成。以下“本轮／未 commit/push／待验证／未部署”等仅描述当时交付边界。
 
 本轮依据最新附件，仅完成 Phase 5 协议收尾及公开题库分页／排序。在已有脏工作区上继续，HEAD 仍为 `8d8cafce30754ba6d5cb6c41f8e4dc417a901116`。所有已有源码、题库、头像、CF 缓存及 Polygon 数据保留。未 commit/push、部署／重启正式服务、修改正式数据库或替换正式 Docker tag。
 
@@ -156,7 +226,9 @@ conda run --no-capture-output -n minioj python scripts/smoke_test_worker_failure
 - 未修共享 daemon 既有失效代理。只通过独立构建器／私有 socket／临时 buildx 配置和已有宿主代理完成构建，无正式 Docker socket／DB/data 挂载。只读公共 CA；未把代理或秘密写入镜像。
 - 独立 `minioj-phase5-builder-20261002` 注册、`minioj-phase5-buildkit-20261002` 容器及其匿名缓存已删除，`/tmp/minioj-phase5-buildx-ayHgmv` 与资源临时目录已清理；缓存可重新构建，不删除任何用户数据。最终 Docker 只读检查正式 Server／Nginx 健康、共享构建器仍在、无本轮故障 owner 残留；保留新验收镜像供用户选择。
 
-## 未完成／下一步
+## 该交付轮次的未完成／下一步（历史记录）
+
+下列是当时未完成事项，不改写该轮证据；其中 hosted CI、正式备份／迁移／部署已在当前发布记录中完成。原缺失截图包与 V1 范围外功能仍维持原边界。
 
 - **待验证：** GitHub 托管 CI 首次运行。本轮未 commit/push，因此没有远端 runner 证据。
 - **未执行：** 正式协调停机／一致性备份／init-db 兼容升级／部署；需另外授权，不能用本轮隔离测试代替正式升级。
