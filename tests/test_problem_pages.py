@@ -47,15 +47,12 @@ def browser_context(chromium, client):
 
     def serve(route):
         # Render real application pages/assets without a deployed server or Worker.
-        response = client.get(route.request.url, follow_redirects=False)
-        headers = {}
-        if "location" in response.headers:
-            headers["location"] = response.headers["location"]
+        # Resolve redirects in the isolated client, never through testserver DNS.
+        response = client.get(route.request.url, follow_redirects=True)
         route.fulfill(
             status=response.status_code,
             body=response.content,
             content_type=response.headers.get("content-type", "text/plain"),
-            headers=headers,
         )
 
     context.route("**/*", serve)
@@ -78,6 +75,19 @@ def test_history_pages_do_not_show_problem_lifecycle_warnings(
     assert "This problem has been modified" not in response.text
     assert "This problem has been deleted" not in response.text
     assert "data-dismiss-key" not in response.text
+
+
+@pytest.mark.parametrize("prefix", ["", "/minioj"])
+def test_legacy_admin_redirect_preserves_prefix(
+    client, problem_history, monkeypatch, prefix
+):
+    monkeypatch.setattr(app, "root_path", prefix)
+    response = client.get(f"{prefix}/admin", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{prefix}/manage"
+    destination = client.get(response.headers["location"])
+    assert destination.status_code == 200
+    assert "Dashboard" in destination.text
 
 
 @pytest.mark.parametrize("prefix", ["", "/minioj"])

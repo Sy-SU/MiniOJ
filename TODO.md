@@ -2,9 +2,21 @@
 
 更新日期：2026-10-02。依据：独立 OJ 规划、新功能附件、网页体验、Contest 增量、Phase 5＋题库分页及最新 V1 Release Candidate 审计附件。架构和协议见 [docs/architecture.md](docs/architecture.md)、[冻结契约](docs/codeharness-api.md)。
 
-Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。Phase 0–5、题库分页／排序和本地 CI 等价检查已验收；当前完整累积工作区已完成 RC 审计，未部署或迁移正式环境，未 staging／commit/push。CPU 计时、Polygon／testlib、网页／比赛、CF 导题实现和全部用户数据保留。下方旧章节中的“未推进 Phase 5”等是各轮历史边界，以顶部最新 RC 证据为准。
+Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。Phase 0–5、题库分页／排序和本地 CI 等价检查已验收；经用户授权，完整累积实现已分为 Core `a02bd86` 与 CF 工具 `18f94c3` 两个提交并正常推送 `origin/main`。首次 hosted CI 的 Ruff 通过，pytest 为 719 passed／4 failed；仅修复测试夹具后待再次推送复验，尚不能宣布 source RC complete。未部署／迁移正式环境、替换正式镜像或创建 tag；全部用户数据保留。下方“未 commit/push”等均为各轮历史边界，以顶部最新证据为准。
 
-## V1 Release Candidate 发布审计（2026-10-02）
+## V1 源码 RC 提交与 hosted CI（2026-10-02；进行中）
+
+- [x] 已提交／推送：`a02bd86b74e116b8d157dbcc43bb083c4fbfa0ce` — `feat: prepare MiniOJ V1 release candidate`，139 文件、20,479 insertions／636 deletions；`18f94c31c10d05cbc48e298ff8762066beb12d12` — `feat: add isolated Codeforces import tooling and reference selection`，26 文件、4,155 insertions／0 deletions。逐文件 allowlist staging、staged stat／name-status／check 通过，不强拆共享文件，不 force／amend／改写历史。
+- [x] 推送实测：初始远端／工作区基线 `8d8cafce30754ba6d5cb6c41f8e4dc417a901116`；首次 push 前 HEAD 与 push 后 `origin/main` 均为 `18f94c31c10d05cbc48e298ff8762066beb12d12`，推送前后 `git status --short` 为空。
+- [x] 安全复核：初始 268 文件与发布审计 SHA-256 全部一致；两个新提交未加入 `.env`、DB/WAL/SHM、runtime 题库／头像／Job、CF 密钥／cache、个人题解、generated evidence 或 ZIP。3 个已知私密值和常见凭证模式均无命中；题库 PNG、生成审计 JSON、其余用户数据保留。
+- [x] 首次 hosted CI 终态：[Checks run 37007186704](https://github.com/Sy-SU/MiniOJ/actions/runs/37007186704)，commit `18f94c3`，**failure：4 failed／719 passed（182.08s）**。Ubuntu 24.04、Python 3.12.14、pytest 8.4.2、Ruff 0.16.10、Playwright 1.63.0／Chromium 153.0.8010.12；依赖／Chromium 安装和 Ruff format／lint 通过，pytest 失败后 JS／Compose 被跳过，不称为全部 CI 通过。
+- [x] 原因／最小修复：四个 legacy `/admin` 浏览器组合把 TestClient 的 303 原样交给 Chromium，随后对虚拟 `testserver` 的重定向产生 DNS 依赖，报 `ERR_NAME_NOT_RESOLVED`。仅修改 `test_problem_pages.py` 的请求拦截夹具，在 TestClient 内跟随重定向；新增根／子路径 303＋Location＋目标 Dashboard 断言，不修改应用、HTTP、DNS／proxy、依赖或跳过测试。共享夹具相关 `test_problem_pages.py`／`test_submission_results.py` **70 passed（62.00s）**，Ruff／format／diff check 通过；全量预期为原 723＋新增 2，是否通过仍待 hosted CI 实跑。
+- [ ] 最终 HEAD 全绿 CI 和 source RC complete：待 fix commit 正常推送后复验。首跑另有 action Node 20 弃用警告，runner 实际强制 Node 24 且这些步骤成功，本次不为警告扩大 workflow 改动。
+- [ ] 遗留跟踪边界：`compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig` 从旧远端基线就已跟踪，两个新提交没有增删或改写它们，字节／SHA-256 与旧历史和磁盘完全相同。之前仅检查 ignored `.orig` 样本不能证明所有旧备份均已取消跟踪；已询问是否只取消 Git 跟踪并保留磁盘，不擅自删除或改写旧历史。
+
+正式备份／停写／迁移／构建／部署／smoke 和最终 tag 仍需独立授权，本轮不执行。下方发布审计及更早阶段保留为提交前历史快照。
+
+## V1 Release Candidate 发布审计（2026-10-02；提交前快照）
 
 **结论：READY_WITH_NOTES。** 可按下列范围准备提交；不是上线批准。GitHub 托管 CI 首跑、正式停机升级／部署仍未执行；旧验收镜像与本轮 OpenAPI 元数据存在一处明确差异。本轮只审计／修补确定缺口，不开发新功能，不改共用 HTTP 行为，不自动提交／推送。
 
