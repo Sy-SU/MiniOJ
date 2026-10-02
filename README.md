@@ -4,7 +4,7 @@
 
 MiniOJ is a small multi-user online judge designed for both browser users and coding agents. It runs on WSL Ubuntu, keeps application state in SQLite, and executes untrusted C++20 programs only inside restricted Docker containers.
 
-Release candidate status (2026-10-02): Phase 0–5 and problem pagination/sorting have passed local acceptance. The current cumulative workspace passed release audit with **723 tests**, and the result is **READY_WITH_NOTES**; checks, image metadata differences and the separate Core/CF commit scopes are recorded in [TODO.md](TODO.md). Local CI-equivalent checks are not a hosted GitHub CI run. Hosted CI and coordinated production upgrade/deployment remain pending; this audit does not commit or push.
+Release candidate status (2026-10-02): **MiniOJ V1 source RC complete**. Core and optional CF tooling are committed/pushed separately; the isolated browser-fixture fix `40ede95` passed [hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) with **725 tests, no failures or skips**, Ruff format/lint, application JS and example Compose checks. Production remains **READY_WITH_NOTES**, not deployed. Commit scopes, historical image differences and legacy backup-tracking notes are recorded in [TODO.md](TODO.md). No production database/service/image/tag was changed; any deployment or release tag needs separate approval.
 
 ## What is included
 
@@ -402,7 +402,7 @@ ruff check .
 python -m pytest -ra
 ```
 
-The minimal `.github/workflows/ci.yml` runs these full checks on Python 3.12, installs Chromium for browser tests, checks application JS, and parses Compose with `.env.example`. It uses no production secrets and runs no Docker Judge. Real Docker integration remains in the separate smoke scripts below. Hosted CI has not yet run for the uncommitted Phase 5 changes; local commands and evidence are recorded in [phase5-validation.md](docs/phase5-validation.md).
+The minimal `.github/workflows/ci.yml` runs these full checks on Python 3.12, installs Chromium for browser tests, checks application JS, and parses Compose with `.env.example`. It uses no production secrets and runs no Docker Judge. Real Docker integration remains in the separate smoke scripts below. [Hosted CI for `40ede95`](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) completed successfully with 725 tests; the initial four browser-fixture failures and their minimal fix are recorded in [TODO.md](TODO.md). Earlier local/Docker acceptance remains a dated snapshot in [phase5-validation.md](docs/phase5-validation.md), not production deployment evidence.
 
 With Docker and the judge image available, run the isolated end-to-end checks:
 

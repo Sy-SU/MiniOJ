@@ -1,6 +1,8 @@
 # Phase 5 implementation and validation — 2026-10-02
 
-本文保留 Phase 5 交付轮次的历史快照（722 项及当时镜像摘要匹配），不是后续 RC 审计的最新运行结果。最新发布审计 **723 passed（624.25s），0 failed／0 skipped，READY_WITH_NOTES**；完整提交边界见 [TODO.md](../TODO.md) 顶部。RC 仅补 OpenAPI 既有分页响应头声明、迁移保留回归、忽略规则及文档；已再次通过当前源码八 verdict／backup→restore HTTP smoke。旧镜像 166 文件核对为 165 一致、仅 `src/minioj/server/api.py` 的 OpenAPI 元数据不同，不将历史一致性外推为当前全部源码一致。GitHub 托管 CI 和正式升级／部署仍未执行，审计不 commit/push。
+本文保留 Phase 5 交付轮次的历史快照（722 项及当时镜像摘要匹配）和提交前发布审计 **723 passed（624.25s）**，不替代最新提交状态。当前为 **MiniOJ V1 source RC complete**：Core／可选 CF 工具已分开提交并推送，测试夹具独立修复 `40ede95` 的 [hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) **725 passed（178.42s），0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿；完整 SHA／命令／首跑失败原因见 [TODO.md](../TODO.md) 顶部。正式上线仍为 READY_WITH_NOTES，未操作正式数据库、服务、镜像或 tag。
+
+提交前 RC 审计只补 OpenAPI 既有分页响应头声明、迁移保留回归、忽略规则及文档，并重跑八 verdict／backup→restore HTTP smoke。其旧镜像 166 文件核对为 165 一致、仅 API 元数据不同，是之后 vendor 行尾空白规范化和 CI 测试修复前的快照，不将旧镜像称为当前全部字节一致；正式 RC image 仍须从 committed SHA 单独构建和验收。以下“未 commit/push”等仅描述当时交付边界。
 
 本轮依据最新附件，仅完成 Phase 5 协议收尾及公开题库分页／排序。在已有脏工作区上继续，HEAD 仍为 `8d8cafce30754ba6d5cb6c41f8e4dc417a901116`。所有已有源码、题库、头像、CF 缓存及 Polygon 数据保留。未 commit/push、部署／重启正式服务、修改正式数据库或替换正式 Docker tag。
 

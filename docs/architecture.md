@@ -4,7 +4,7 @@
 
 本文区分**规划约束／共用约定**、**当前实现**和**验收证据**。已有代码不等于运行验证；Phase 0–5 的实际范围见第 12 节与 TODO，不外推为正式部署通过。Phase 2–3 已推送为 `8d8cafc`；其后脏工作区原样保留并增量开发，不重建骨架。最新 Phase 5 冻结契约见 [codeharness-api.md](codeharness-api.md)，以下早期记录保留为历史。
 
-当前 Release Candidate 审计只做发布安全、冻结契约、迁移保留和文档复核，不开发新功能；结论 READY_WITH_NOTES，完整 723 项测试及本地 CI 等价检查通过，最新结果见 [TODO](../TODO.md)。Phase 0–5、题库分页／排序已有验收；GitHub 托管 CI 首跑、正式停机升级／部署未执行，本轮不 commit/push。公开 `.env.example` 经批准改为 loopback 绑定，实际 `.env` 和 Compose 旧 fallback 不变。
+当前为 **MiniOJ V1 source RC complete**：Core／可选 CF 工具已按批准范围分开提交并正常推送，CI 测试夹具问题以独立 `40ede95` 修复；[hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 完整 **725 项**及 Ruff／JS／示例 Compose 全绿，最新提交／历史快照／遗留跟踪备注见 [TODO](../TODO.md)。不开发新功能、不改 HTTP 行为；正式上线仍为 READY_WITH_NOTES，未停机迁移／部署、替换正式镜像或创建 tag。公开 `.env.example` 经批准改为 loopback 绑定，实际 `.env` 和 Compose 旧 fallback 不变。
 
 ## 1. 定位与 V1 边界
 
@@ -550,7 +550,7 @@ Reference Client `scripts/smoke_test_codeharness_api.py` 完全独立标准库 H
 
 日志覆盖 HTTP 错误、登录失败、提交创建、Worker claim、编译／评测开始结束、verdict、恢复及 Sandbox／Worker 异常；提交和构建路径携带各自关联标识。日志不记录源码、Token 或 Secret，对外 IE 类别与内部诊断分开保存和展示。跨服务统一 trace ID 和集中日志仍不在 V1 范围内。
 
-`.github/workflows/ci.yml` 为最小 GitHub Actions：Python 3.12、dev 依赖／Chromium、全仓 Ruff format/lint、`python -m pytest -ra`、应用 JS 和示例 Compose 静态解析。无真实 Secret，普通 CI 不跑 Docker Judge；真实 Docker integration 留在单独 smoke。未自动提交／推送，因此 GitHub 托管 runner 的第一次执行仍待验证，不将本地 checks 称为远端 CI 已运行。
+`.github/workflows/ci.yml` 为最小 GitHub Actions：Python 3.12、dev 依赖／Chromium、全仓 Ruff format/lint、`python -m pytest -ra`、应用 JS 和示例 Compose 静态解析。无真实 Secret，普通 CI 不跑 Docker Judge；真实 Docker integration 留在单独 smoke。首次 hosted run 的四个虚拟域名重定向测试失败以仅测试夹具的 fix 修复，`40ede95` 的 [完整 hosted CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 已实际通过 **725 项**；不把此结果扩大为正式部署或新的 Docker integration。
 
 `scripts/backup_restore.py` 离线快照：维护窗口停止所有 Web/Worker/导题/CLI 写入，整个 SQLite 目录（含 WAL/SHM/journal）与整个 data（tests/assets/avatars）一致复制；私密配置、匹配代码／Judge image 另存，不把源码/Secret 回显。只创建新 0700 目录，拒绝既有目标／重叠／symlink，检查 integrity/外键/文件摘要和源变化；不自动停机、启动、覆盖或删除。恢复只能到新隔离目录，校验后用匹配版本启动并新提交 AC；失败留下本次不完整目录供检查。临时 job 非恢复必需，遗留任务沿用既有安全中断语义。README 双语有操作步骤。
 

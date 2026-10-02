@@ -2,19 +2,21 @@
 
 更新日期：2026-10-02。依据：独立 OJ 规划、新功能附件、网页体验、Contest 增量、Phase 5＋题库分页及最新 V1 Release Candidate 审计附件。架构和协议见 [docs/architecture.md](docs/architecture.md)、[冻结契约](docs/codeharness-api.md)。
 
-Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。Phase 0–5、题库分页／排序和本地 CI 等价检查已验收；经用户授权，完整累积实现已分为 Core `a02bd86` 与 CF 工具 `18f94c3` 两个提交并正常推送 `origin/main`。首次 hosted CI 的 Ruff 通过，pytest 为 719 passed／4 failed；仅修复测试夹具后待再次推送复验，尚不能宣布 source RC complete。未部署／迁移正式环境、替换正式镜像或创建 tag；全部用户数据保留。下方“未 commit/push”等均为各轮历史边界，以顶部最新证据为准。
+Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。经用户授权，完整累积实现已分为 Core `a02bd86` 与 CF 工具 `18f94c3` 两个提交并正常推送 `origin/main`；首次 hosted CI 发现的测试夹具问题由独立 fix `40ede95` 修复。该提交的完整 hosted CI **725 passed，0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿，当前为 **MiniOJ V1 source RC complete**；正式上线仍为 READY_WITH_NOTES。未部署／迁移正式环境、替换正式镜像或创建 tag；全部用户数据保留。下方“未 commit/push”等均为各轮历史边界，以顶部最新证据为准。
 
-## V1 源码 RC 提交与 hosted CI（2026-10-02；进行中）
+## V1 源码 RC 提交与 hosted CI（2026-10-02；源码验收完成）
 
 - [x] 已提交／推送：`a02bd86b74e116b8d157dbcc43bb083c4fbfa0ce` — `feat: prepare MiniOJ V1 release candidate`，139 文件、20,479 insertions／636 deletions；`18f94c31c10d05cbc48e298ff8762066beb12d12` — `feat: add isolated Codeforces import tooling and reference selection`，26 文件、4,155 insertions／0 deletions。逐文件 allowlist staging、staged stat／name-status／check 通过，不强拆共享文件，不 force／amend／改写历史。
 - [x] 推送实测：初始远端／工作区基线 `8d8cafce30754ba6d5cb6c41f8e4dc417a901116`；首次 push 前 HEAD 与 push 后 `origin/main` 均为 `18f94c31c10d05cbc48e298ff8762066beb12d12`，推送前后 `git status --short` 为空。
 - [x] 安全复核：初始 268 文件与发布审计 SHA-256 全部一致；两个新提交未加入 `.env`、DB/WAL/SHM、runtime 题库／头像／Job、CF 密钥／cache、个人题解、generated evidence 或 ZIP。3 个已知私密值和常见凭证模式均无命中；题库 PNG、生成审计 JSON、其余用户数据保留。
 - [x] 首次 hosted CI 终态：[Checks run 37007186704](https://github.com/Sy-SU/MiniOJ/actions/runs/37007186704)，commit `18f94c3`，**failure：4 failed／719 passed（182.08s）**。Ubuntu 24.04、Python 3.12.14、pytest 8.4.2、Ruff 0.16.10、Playwright 1.63.0／Chromium 153.0.8010.12；依赖／Chromium 安装和 Ruff format／lint 通过，pytest 失败后 JS／Compose 被跳过，不称为全部 CI 通过。
-- [x] 原因／最小修复：四个 legacy `/admin` 浏览器组合把 TestClient 的 303 原样交给 Chromium，随后对虚拟 `testserver` 的重定向产生 DNS 依赖，报 `ERR_NAME_NOT_RESOLVED`。仅修改 `test_problem_pages.py` 的请求拦截夹具，在 TestClient 内跟随重定向；新增根／子路径 303＋Location＋目标 Dashboard 断言，不修改应用、HTTP、DNS／proxy、依赖或跳过测试。共享夹具相关 `test_problem_pages.py`／`test_submission_results.py` **70 passed（62.00s）**，Ruff／format／diff check 通过；全量预期为原 723＋新增 2，是否通过仍待 hosted CI 实跑。
-- [ ] 最终 HEAD 全绿 CI 和 source RC complete：待 fix commit 正常推送后复验。首跑另有 action Node 20 弃用警告，runner 实际强制 Node 24 且这些步骤成功，本次不为警告扩大 workflow 改动。
+- [x] 原因／最小修复：四个 legacy `/admin` 浏览器组合把 TestClient 的 303 原样交给 Chromium，随后对虚拟 `testserver` 的重定向产生 DNS 依赖，报 `ERR_NAME_NOT_RESOLVED`。仅修改 `test_problem_pages.py` 的请求拦截夹具，在 TestClient 内跟随重定向；新增根／子路径 303＋Location＋目标 Dashboard 断言，不修改应用、HTTP、DNS／proxy、依赖或跳过测试。共享夹具相关 `test_problem_pages.py`／`test_submission_results.py` **70 passed（62.00s）**，Ruff／format／diff check 通过。
+- [x] 已提交／推送独立修复：`40ede9585a057760d463d154c8fea186ef195fee` — `fix: resolve browser fixture redirects inside isolated client`，2 文件、29 insertions／7 deletions；push 前 HEAD／push 后远端 main 为该 SHA，工作区干净，未 amend 之前两个提交。
+- [x] Hosted CI 验收通过：[Checks run 37008639747](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747)，绑定 `40ede9585a057760d463d154c8fea186ef195fee`，push／attempt 1，**completed / success**，2026-10-02 12:49:34 UTC 完成。完整 `python -m pytest -ra` **725 passed（178.42s），0 failed／0 skipped**；包含原 723＋新增 2。Ruff format **117 文件**／lint、8 个应用 JS、示例 Compose 均实际执行通过；不是仅凭 workflow 文件或本地检查勾选。
+- [x] 当前状态：**MiniOJ V1 source RC complete**，不是 production deployed。源码／测试以已验证的 `40ede95` 为基准，后续仅同步发布文档，不宣称旧验收镜像与当前字节全部一致。runner 另有 action Node 20 弃用警告，但实际强制 Node 24 且步骤成功，本次不为非阻塞警告扩大 workflow 改动。
 - [ ] 遗留跟踪边界：`compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig` 从旧远端基线就已跟踪，两个新提交没有增删或改写它们，字节／SHA-256 与旧历史和磁盘完全相同。之前仅检查 ignored `.orig` 样本不能证明所有旧备份均已取消跟踪；已询问是否只取消 Git 跟踪并保留磁盘，不擅自删除或改写旧历史。
 
-正式备份／停写／迁移／构建／部署／smoke 和最终 tag 仍需独立授权，本轮不执行。下方发布审计及更早阶段保留为提交前历史快照。
+后续需从 committed SHA 构建 RC image、协调停止全部写入方并做一致性备份、migration、deployment、production smoke／验证／回滚预案；完成正式部署验证后才考虑最终 `v1.0.0`。可以建议 `v1.0.0-rc1`，本轮不自动创建任何 tag，也不执行这些正式操作。下方发布审计及更早阶段保留为提交前历史快照。
 
 ## V1 Release Candidate 发布审计（2026-10-02；提交前快照）
 
@@ -429,8 +431,8 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 - [x] 已有实现：题库 Web 50 题 SQL 分页／难度双向排序／字面量搜索，无 JS 可用；API 显式 page 才分页，保留数组兼容；边界／实际 HTTP 浏览器验收通过。
 - [x] 已有实现：中英文 README、architecture、冻结契约及本轮命令／证据同步；未实现范围不冒充完成。
 - [x] 已有实现：最小无 Secret CI、停止全部写入方的 SQLite 整目录＋全部 data 备份／新目录恢复工具；不删除 `.orig` 或既有数据。
-- [x] 验收通过：最新 RC 全仓 **723 项 pytest**／本地静态检查、当前源码 Docker 八 verdict／backup → restore → AC；干净镜像独立 Nginx 是 RC 前交付快照，本轮只复用核对并标记 API 元数据差异，不外推为当前镜像全部源码一致。见顶部和验收记录。
-- [ ] 待验证：GitHub 托管 runner 第一次 CI；本轮未 commit/push，无远端执行证据。
+- [x] 验收通过：发布审计本地全仓 **723 项 pytest**／静态检查，以及发布后 `40ede95` 的完整 hosted CI **725 passed**；Docker 八 verdict／backup → restore → AC、干净镜像独立 Nginx 和镜像字节核对保留为提交前快照，不外推为当前正式镜像全部源码一致。见顶部和验收记录。
+- [x] 验收通过：GitHub 托管 CI 首跑问题已用最小独立 fix 修复，最新完整 [Checks run 37008639747](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 全绿；不代表正式升级／部署。
 - [x] 验收通过：下列功能／安全／资源矩阵所列本地自动化与受控 Docker 范围；版本、步骤、结果与清理已记录，不代表正式上线。
 
 **交付物：** 独立客户端协议、统一反馈策略、完整文档和最终验收记录。
@@ -443,7 +445,7 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 
 ## 最终安全与资源验收矩阵
 
-下表自动化范围已随最新 RC 完整 **723 项**回归覆盖；当前源码八 verdict／backup→restore HTTP smoke 本轮重新通过，独立 Nginx／standalone Sandbox／Worker fault 的真实证据保留为之前交付快照，未冒充 RC 再次重跑。仅勾选所述范围，不等价于渗透测试认证、当前镜像全部字节一致或正式部署。CI 托管 runner／正式升级另列待验证。
+下表自动化范围已随发布审计本地 **723 项**及发布后 hosted CI **725 项**回归覆盖；八 verdict／backup→restore HTTP smoke、独立 Nginx／standalone Sandbox／Worker fault 的真实证据保留为提交前交付快照，不冒充发布后的 Docker 重跑。仅勾选所述范围，不等价于渗透测试认证、当前镜像全部字节一致或正式部署。正式升级仍待独立授权和验收。
 
 | 范围 | 验收通过的实际证据 | 阶段 |
 | --- | --- | --- |
@@ -488,4 +490,4 @@ README 双语、architecture 和 contest 规则同步；本次无新配置／数
 - Polygon 本地 ZIP 导入已按本轮明确要求纳入 Phase 1／3 扩展；内置 Codeforces 在线抓取、Brute/Stress Test、SSE、多 Worker／外部队列仍不纳入 V1 Core。仓库可选 `store/cf_import` 是另行授权的独立导题工具，不成为 Core 或 Reference Client 的依赖；用户题解／缓存／生成 evidence 不进入源码提交。C++ generator 保持 Phase 1 扩展范围。
 - 原 Mac Coding Agent Harness 开发项移出 MiniOJ TODO。本仓库不含 Agent Loop、模型路由、LLM Provider、Prompt、Agent State、客户端 Workspace 或模型密钥开发任务；/agent/ 只保留为 HTTP 命名空间。
 
-**后续起点：** Phase 0–5 与题库分页／排序已实现及本地验收，整体 RC 审计 READY_WITH_NOTES；GitHub 托管 CI 首跑仍待验证。接下来经用户审批顶部 Core／CF 两组清单，才准备 staged diff、提交／推送并观察 CI，再单独安排正式升级；本轮不自动执行这些步骤。原缺失 Polygon 截图包及 V1 范围外功能继续保持原状态，不擅自扩大任务。
+**后续起点：** Phase 0–5 与题库分页／排序已提交、推送并通过完整 hosted CI，当前为 MiniOJ V1 source RC complete；正式上线仍为 READY_WITH_NOTES，须单独授权 committed SHA 镜像构建、协调停写／一致性备份、迁移／部署／production smoke 和最终 tag。3 个旧历史已跟踪 `.orig` 的取消跟踪选择、原缺失 Polygon 截图包及 V1 范围外功能保持顶部列明状态，不擅自删除文件、改写历史或扩大任务。

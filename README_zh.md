@@ -4,7 +4,7 @@
 
 MiniOJ 是一个面向浏览器用户和 Coding Agent 的轻量级多用户在线评测系统。它运行在 WSL Ubuntu 上，使用 SQLite 保存应用数据，并且只在受限的 Docker 容器中编译、执行不可信的 C++20 程序。
 
-Release Candidate 状态（2026-10-02）：Phase 0–5 和题库分页／排序已通过本地验收，当前累积工作区发布审计通过 **723 项测试**，结论 **READY_WITH_NOTES**；检查、镜像元数据差异和 Core／CF 分组提交边界见 [TODO.md](TODO.md)。本地 CI 等价检查不代表 GitHub 托管 CI 已运行；首次托管 CI、正式协调停机升级／部署仍待执行，本轮审计不 commit/push。
+Release Candidate 状态（2026-10-02）：**MiniOJ V1 source RC complete**。Core／可选 CF 工具已分开提交并推送，测试夹具最小修复 `40ede95` 的 [hosted Checks CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) **725 项全通过，0 failed／0 skipped**，Ruff format／lint、应用 JS 和示例 Compose 均通过。正式上线仍为 **READY_WITH_NOTES**，不是 production deployed；提交范围、历史镜像差异和旧备份跟踪备注见 [TODO.md](TODO.md)。本轮未修改正式数据库／服务／镜像或创建 tag，正式升级和发布标签需单独授权。
 
 ## 已实现功能
 
@@ -587,7 +587,7 @@ ruff check .
 python -m pytest -ra
 ```
 
-最小 `.github/workflows/ci.yml` 使用 Python 3.12 执行完整检查、安装 Chromium 跑浏览器、检查应用 JS，并仅用 `.env.example` 解析 Compose；不使用正式 Secret，普通 CI 不运行 Docker Judge。真实 Docker integration 由下方独立 smoke 执行。本轮未提交／推送，GitHub 托管 CI 首跑仍待验证；本地命令和证据见 [phase5-validation.md](docs/phase5-validation.md)。
+最小 `.github/workflows/ci.yml` 使用 Python 3.12 执行完整检查、安装 Chromium 跑浏览器、检查应用 JS，并仅用 `.env.example` 解析 Compose；不使用正式 Secret，普通 CI 不运行 Docker Judge。真实 Docker integration 由下方独立 smoke 执行。`40ede95` 的 [hosted CI](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747) 已完整通过 725 项；首次 4 个测试夹具失败和最小修复见 [TODO.md](TODO.md)。更早本地／Docker 证据保留为 [phase5-validation.md](docs/phase5-validation.md) 的历史快照，不代表正式部署。
 
 Docker Daemon 和判题镜像可用时，运行隔离的端到端检查：
 
