@@ -1,0 +1,4 @@
+{% extends "management_base.html" %}{% block title %}Submissions · Management{% endblock %}{% block content %}
+<div class="page-heading"><h1>Submission management</h1></div>
+<form method="get" class="console-filters">{% for field,label in [('submission_id','Submission ID'),('user','User'),('problem','Problem'),('contest','Contest ID'),('language','Language'),('status','Status'),('verdict','Verdict')] %}<label>{{ label }}<input name="{{ field }}" value="{{ filters[field] or '' }}" maxlength="80"></label>{% endfor %}<button class="button button-secondary">Filter</button><a href="{{ base_path }}/manage/submissions">Reset</a></form>
+{% include 'submission_table.html' %}<div class="pagination">{% if page > 1 %}<a href="?{{ filters|urlencode }}&page={{ page-1 }}">Previous</a>{% endif %}{% if submissions|length == 100 %}<a href="?{{ filters|urlencode }}&page={{ page+1 }}">Next</a>{% endif %}</div>{% endblock %}

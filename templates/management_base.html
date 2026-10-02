@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{% block title %}Management · MiniOJ{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">{% block head %}{% endblock %}</head>
+<body class="management-body">
+<header class="console-header"><a class="brand" href="{{ base_path }}/"><span class="brand-mark">M</span>MiniOJ</a><a class="management-entry" href="{{ base_path }}/manage">管理</a><strong>Management Console</strong><a class="console-account" href="{{ base_path }}/users/{{ current_user.username }}">{{ current_user.username }} · {{ current_user.role }}</a><a href="{{ base_path }}/problems">Return to site</a></header>
+<div class="console-layout"><aside class="console-sidebar"><nav aria-label="Management navigation">
+{% for key, label, path in [('dashboard','Dashboard','/manage'),('problems','Problems','/manage/problems'),('contests','Contests','/manage/contests'),('submissions','Submissions','/manage/submissions')] %}<a {% if manage_section == key %}aria-current="page"{% endif %} href="{{ base_path }}{{ path }}">{{ label }}</a>{% endfor %}
+{% if can(current_user, 'system') %}<div class="sidebar-divider">System management</div><a {% if manage_section == 'users' %}aria-current="page"{% endif %} href="{{ base_path }}/manage/users">Users</a><a {% if manage_section == 'system' %}aria-current="page"{% endif %} href="{{ base_path }}/manage/system">System</a>{% endif %}
+</nav></aside><main class="console-content">{% if flash %}<div class="alert alert-{{ flash.kind }}" role="status">{{ flash.message }}</div>{% endif %}{% block content %}{% endblock %}</main></div>
+<script src="{{ url_for('static', path='/alerts.js') }}"></script><script src="{{ url_for('static', path='/code.js') }}"></script>{% block scripts %}{% endblock %}</body></html>

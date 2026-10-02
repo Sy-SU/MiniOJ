@@ -13,7 +13,7 @@
     panel.hidden = false;
     status.textContent = "Rendering…";
     try {
-      const response = await fetch(`${basePath}/admin/problems/preview`, {
+      const response = await fetch(`${basePath}/manage/problems/preview`, {
         method: "POST",
         body: new FormData(form),
       });

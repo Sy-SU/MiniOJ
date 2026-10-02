@@ -40,6 +40,7 @@ class User(Base):
         Index("uq_users_username_lower", func.lower(username), unique=True),
     )
     password_hash: Mapped[str] = mapped_column(String(512))
+    avatar_key: Mapped[str | None] = mapped_column(String(80))
     role: Mapped[str] = mapped_column(String(16), default="user", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -91,6 +92,12 @@ class Problem(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     time_limit_ms: Mapped[int] = mapped_column(Integer, default=2000)
     memory_limit_mb: Mapped[int] = mapped_column(Integer, default=256)
+    checker: Mapped[str] = mapped_column(
+        String(32), default="lines", server_default="lines"
+    )
+    checker_name: Mapped[str | None] = mapped_column(String(100))
+    checker_bundle: Mapped[str | None] = mapped_column(Text)
+    checker_sha256: Mapped[str | None] = mapped_column(String(64))
     source: Mapped[str | None] = mapped_column(String(100))
     source_id: Mapped[str | None] = mapped_column(String(100))
     source_url: Mapped[str | None] = mapped_column(String(1000))
@@ -197,12 +204,23 @@ class TestcaseBuild(Base):
 
 class Submission(Base):
     __tablename__ = "submissions"
-    __table_args__: ClassVar[dict[str, bool]] = {"sqlite_autoincrement": True}
+    __table_args__: ClassVar[tuple] = (
+        Index(
+            "uq_submission_user_request", "user_id", "idempotency_key_hash", unique=True
+        ),
+        {"sqlite_autoincrement": True},
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     problem_id: Mapped[str] = mapped_column(ForeignKey("problems.id"), index=True)
     problem_revision: Mapped[int] = mapped_column(Integer, server_default="1")
+    contest_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contests.id"), index=True
+    )
+    judge_generation: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
     language: Mapped[str] = mapped_column(String(20), default="cpp20")
     source_code: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
@@ -216,20 +234,99 @@ class Submission(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     compile_result: Mapped[str | None] = mapped_column(Text)
     judge_result: Mapped[str | None] = mapped_column(Text)
+    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64))
+    request_payload_sha256: Mapped[str | None] = mapped_column(String(64))
 
     user: Mapped[User] = relationship(back_populates="submissions")
     problem: Mapped[Problem] = relationship(back_populates="submissions")
+    contest: Mapped[Contest | None] = relationship()
+    judge_runs: Mapped[list[SubmissionJudgeRun]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        order_by="SubmissionJudgeRun.generation",
+    )
 
-    @property
-    def problem_warning(self) -> str | None:
-        if self.problem.deleted_at is not None:
-            return "This problem has been deleted. This submission is retained for reference."
-        if self.problem_revision != self.problem.revision:
-            return (
-                "This problem has been modified since this submission. "
-                "Its result may not match the current statement or testcases."
-            )
-        return None
+
+class SchemaMigration(Base):
+    __tablename__ = "schema_migrations"
+    name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class SubmissionJudgeRun(Base):
+    __tablename__ = "submission_judge_runs"
+    __table_args__ = (UniqueConstraint("submission_id", "generation"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("submissions.id", ondelete="CASCADE"), index=True
+    )
+    generation: Mapped[int] = mapped_column(Integer)
+    problem_revision: Mapped[int] = mapped_column(Integer)
+    trigger_type: Mapped[str] = mapped_column(String(16))
+    triggered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(16))
+    verdict: Mapped[str | None] = mapped_column(String(8))
+    compile_result: Mapped[str | None] = mapped_column(Text)
+    judge_result: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    submission: Mapped[Submission] = relationship(back_populates="judge_runs")
+    actor: Mapped[User | None] = relationship()
+
+
+class Contest(Base):
+    __tablename__ = "contests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    problems: Mapped[list[ContestProblem]] = relationship(
+        back_populates="contest",
+        cascade="all, delete-orphan",
+        order_by="ContestProblem.position",
+    )
+
+
+class ContestProblem(Base):
+    __tablename__ = "contest_problems"
+    __table_args__ = (
+        UniqueConstraint("contest_id", "problem_id"),
+        UniqueConstraint("contest_id", "position"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(
+        ForeignKey("contests.id", ondelete="CASCADE"), index=True
+    )
+    problem_id: Mapped[str] = mapped_column(ForeignKey("problems.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    contest: Mapped[Contest] = relationship(back_populates="problems")
+    problem: Mapped[Problem] = relationship()
+
+
+class ContestParticipant(Base):
+    __tablename__ = "contest_participants"
+    __table_args__ = (UniqueConstraint("contest_id", "user_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(
+        ForeignKey("contests.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    user: Mapped[User] = relationship()
 
 
 class CustomRun(Base):
@@ -268,3 +365,48 @@ def _capture_problem_revision(_mapper, connection, submission: Submission) -> No
             )
             or 1
         )
+
+
+@event.listens_for(Submission, "after_insert")
+def _initial_judge_run(_mapper, connection, submission: Submission) -> None:
+    connection.execute(
+        SubmissionJudgeRun.__table__.insert().values(
+            submission_id=submission.id,
+            generation=submission.judge_generation,
+            problem_revision=submission.problem_revision,
+            trigger_type="initial",
+            triggered_by=submission.user_id,
+            status=submission.status,
+            verdict=submission.verdict,
+            compile_result=submission.compile_result,
+            judge_result=submission.judge_result,
+            started_at=submission.started_at,
+            finished_at=submission.finished_at,
+            created_at=submission.created_at,
+        )
+    )
+
+
+@event.listens_for(Submission, "after_update")
+def _update_judge_run(_mapper, connection, submission: Submission) -> None:
+    connection.execute(
+        SubmissionJudgeRun.__table__.update()
+        .where(
+            SubmissionJudgeRun.submission_id == submission.id,
+            SubmissionJudgeRun.generation == submission.judge_generation,
+        )
+        .values(
+            **{
+                field: getattr(submission, field)
+                for field in (
+                    "problem_revision",
+                    "status",
+                    "verdict",
+                    "compile_result",
+                    "judge_result",
+                    "started_at",
+                    "finished_at",
+                )
+            }
+        )
+    )

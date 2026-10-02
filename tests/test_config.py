@@ -50,6 +50,8 @@ def test_server_accepts_non_placeholder_secret_with_minimum_length():
         "stdin_limit_bytes",
         "compile_time_limit_ms",
         "compile_memory_mb",
+        "checker_time_limit_ms",
+        "checker_memory_mb",
         "testcase_build_time_limit_ms",
         "testcase_build_memory_mb",
         "generator_max_cases",
@@ -101,3 +103,24 @@ def test_server_import_rejects_example_secret_without_disclosing_it():
     assert result.returncode != 0
     assert "MINIOJ_SECRET_KEY must be set" in result.stderr
     assert placeholder not in result.stderr
+
+
+def test_default_output_limit_is_eight_mib(monkeypatch):
+    monkeypatch.delenv("MINIOJ_OUTPUT_LIMIT_BYTES", raising=False)
+    # Defaults are evaluated at class definition time, so inspect in a fresh process.
+    import os
+    import subprocess
+    import sys
+
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from minioj.config import Settings; print(Settings().output_limit_bytes)",
+        ],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert check.stdout.strip() == str(8 * 1024 * 1024)

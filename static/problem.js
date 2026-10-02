@@ -24,7 +24,8 @@
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const detail = typeof payload.detail === "object" ? payload.detail.summary : payload.detail;
+      const legacyDetail = typeof payload.detail === "object" ? payload.detail.summary : payload.detail;
+      const detail = payload.error?.message || legacyDetail;
       const retry = response.headers.get("Retry-After");
       const suffix = retry ? ` Try again in ${retry} second(s).` : "";
       throw new Error((detail || `Request failed (${response.status})`) + suffix);
@@ -36,6 +37,16 @@
     return text.replace(/\r\n/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").trimEnd();
   }
 
+  function sampleMatches(actual, expected) {
+    if (config.checker === "tokens" || config.checker === "yesno") {
+      const tokens = (text) => text.trim().split(/\s+/).filter(Boolean);
+      const left = tokens(config.checker === "yesno" ? actual.toUpperCase() : actual);
+      const right = tokens(config.checker === "yesno" ? expected.toUpperCase() : expected);
+      return left.length === right.length && left.every((token, index) => token === right[index]);
+    }
+    return normalized(actual) === normalized(expected);
+  }
+
   async function run(stdin, expected = null) {
     actionButtons.forEach((button) => { button.disabled = true; });
     workspaceStatus.textContent = "Running";
@@ -43,12 +54,17 @@
     try {
       const payload = await request(`${basePath}/api/v1/runs`, {source_code: code.value, language: "cpp20", stdin});
       const memory = payload.memory_kb == null ? "unknown" : `${payload.memory_kb} KB`;
-      const sections = [`Status: ${payload.status}`, `Exit code: ${payload.exit_code}`, `Time: ${payload.time_ms} ms`, `Memory: ${memory}`];
+      const timeLabel = payload.status === "CE" ? "Compile time" : "CPU time";
+      const sections = [`Status: ${payload.status}`, `Exit code: ${payload.exit_code}`, `${timeLabel}: ${payload.time_ms} ms`, `Memory: ${memory}`];
       let successful = payload.status === "OK";
       if (expected !== null) {
-        const matches = normalized(payload.stdout) === normalized(expected);
-        successful = successful && matches;
-        sections.push(`Sample: ${matches ? "output matches" : "output differs"}`);
+        if (config.checker === "testlib") {
+          sections.push("Sample: execution only; submit to evaluate with the problem's checker.");
+        } else {
+          const matches = sampleMatches(payload.stdout, expected);
+          successful = successful && matches;
+          sections.push(`Sample: ${matches ? "output matches" : "output differs"}`);
+        }
         sections.push(`\nexpected\n${expected}`);
       }
       if (payload.stdout) sections.push(`\nstdout\n${payload.stdout}`);
@@ -78,7 +94,7 @@
     workspaceStatus.textContent = "Submitting";
     show("Queueing submission…", "pending");
     try {
-      const payload = await request(`${basePath}/api/v1/submissions`, {problem_id: config.problemId, language: "cpp20", source_code: code.value});
+      const payload = await request(`${basePath}${config.submitPath || '/api/v1/submissions'}`, {problem_id: config.problemId, language: "cpp20", source_code: code.value});
       window.location.assign(`${basePath}/submissions/${payload.submission_id}`);
     } catch (error) {
       show(error.message, "error");

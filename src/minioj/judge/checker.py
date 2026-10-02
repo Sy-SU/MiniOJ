@@ -9,5 +9,16 @@ def normalize_output(value: str) -> str:
     return "\n".join(lines)
 
 
-def outputs_match(actual: str, expected: str) -> bool:
-    return normalize_output(actual) == normalize_output(expected)
+def outputs_match(actual: str, expected: str, checker: str = "lines") -> bool:
+    if checker == "lines":
+        return normalize_output(actual) == normalize_output(expected)
+    if checker == "tokens":
+        return actual.split() == expected.split()
+    if checker == "yesno":
+        actual_tokens = actual.upper().split()
+        expected_tokens = expected.upper().split()
+        return (
+            all(token in {"YES", "NO"} for token in expected_tokens)
+            and actual_tokens == expected_tokens
+        )
+    raise ValueError("Unsupported problem checker")

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from minioj.database import get_db
 from minioj.models import ApiToken, User
+from minioj.permissions import Permission, require_permission
 from minioj.security import hash_token, valid_csrf
 
 
@@ -55,10 +56,17 @@ def optional_user(
     return user if user and user.is_active else None
 
 
-def current_user(user: User | None = Depends(optional_user)) -> User:
+def current_user(request: Request, user: User | None = Depends(optional_user)) -> User:
     if user is None:
+        headers = (
+            {"WWW-Authenticate": "Bearer"}
+            if request.headers.get("Authorization")
+            else None
+        )
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers=headers,
         )
     return user
 
@@ -71,16 +79,17 @@ def bearer_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Valid Bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     return user
 
 
 def admin_user(user: User = Depends(current_user)) -> User:
-    if user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
-        )
-    return user
+    return require_permission(user, Permission.CONTENT)
+
+
+def system_user(user: User = Depends(current_user)) -> User:
+    return require_permission(user, Permission.SYSTEM)
 
 
 def require_session_csrf(request: Request, authorization: str | None) -> None:

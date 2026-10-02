@@ -9,6 +9,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +22,28 @@ from minioj.models import Problem, Sample, Submission, TestCase, TestcaseBuild, 
 logger = logging.getLogger("minioj.problems")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 TESTCASE_TYPES = frozenset({"sample", "hidden", "generated"})
+PROBLEM_PAGE_SIZE = 50
+ProblemSort = Literal["default", "difficulty_asc", "difficulty_desc"]
+
+
+def problem_list_query(q: str = "", sort: ProblemSort = "default", *, recent=False):
+    """Keep the two existing default orders; sort and page in SQL, not Python."""
+    query = select(Problem).where(Problem.deleted_at.is_(None))
+    if q:
+        query = query.where(
+            Problem.id.contains(q, autoescape=True)
+            | Problem.title.contains(q, autoescape=True)
+        )
+    if sort != "default":
+        rating = (
+            Problem.rating.asc() if sort == "difficulty_asc" else Problem.rating.desc()
+        )
+        return query.order_by(Problem.rating.is_(None), rating, Problem.id)
+    return (
+        query.order_by(Problem.created_at.desc(), Problem.id)
+        if recent
+        else query.order_by(Problem.id)
+    )
 
 
 def ensure_problem_mutable(db: Session, problem_id: str) -> None:
@@ -292,11 +315,15 @@ def add_testcase_batch(
     cases: list[tuple[str | bytes, str | bytes]],
     *,
     finalize: Callable[[list[TestCase]], None] | None = None,
+    case_types: list[str] | None = None,
 ) -> list[TestCase]:
     if testcase_type not in TESTCASE_TYPES:
         raise ValueError("Invalid testcase type")
     if not cases:
         raise ValueError("No testcase data was generated")
+    types = case_types if case_types is not None else [testcase_type] * len(cases)
+    if len(types) != len(cases) or any(kind not in TESTCASE_TYPES for kind in types):
+        raise ValueError("Invalid testcase types")
     ensure_problem_mutable(db, problem.id)
     validated = [
         (
@@ -323,13 +350,14 @@ def add_testcase_batch(
             output_digest,
         ) in enumerate(validated, start=1):
             order = max_order + offset
+            case_type = types[offset - 1]
             input_path = _write_payload(directory, order, ".in", input_payload)
             created_paths.append(input_path)
             output_path = _write_payload(directory, order, ".out", output_payload)
             created_paths.append(output_path)
             testcase = TestCase(
                 problem_id=problem.id,
-                type=testcase_type,
+                type=case_type,
                 input_path=_relative(input_path),
                 output_path=_relative(output_path),
                 input_sha256=input_digest,
@@ -339,7 +367,7 @@ def add_testcase_batch(
             db.add(testcase)
             db.flush()
             testcases.append(testcase)
-            if testcase_type == "sample":
+            if case_type == "sample":
                 db.add(
                     Sample(
                         problem_id=problem.id,
@@ -492,27 +520,36 @@ def delete_problem(db: Session, problem: Problem) -> None:
         problem.deleted_at = utcnow()
         # Retain the row and files so historical references and running judges
         # remain valid. A deleted ID cannot silently become a different problem.
-        db.execute(
-            update(Submission)
-            .where(
-                Submission.problem_id == problem.id,
-                Submission.status == SubmissionStatus.QUEUED.value,
+        cancelled = (
+            db.execute(
+                update(Submission)
+                .where(
+                    Submission.problem_id == problem.id,
+                    Submission.status == SubmissionStatus.QUEUED.value,
+                )
+                .values(
+                    status=SubmissionStatus.FINISHED.value,
+                    verdict=Verdict.IE.value,
+                    finished_at=utcnow(),
+                    judge_result=json.dumps(
+                        {
+                            "verdict": Verdict.IE.value,
+                            "summary": "This problem has been deleted before judging started.",
+                            "tests": {"total": 0, "passed": 0, "failed_test": None},
+                            "test_results": [],
+                            "resources": {"time_ms": 0, "memory_kb": None},
+                        }
+                    ),
+                )
+                .returning(Submission.id)
             )
-            .values(
-                status=SubmissionStatus.FINISHED.value,
-                verdict=Verdict.IE.value,
-                finished_at=utcnow(),
-                judge_result=json.dumps(
-                    {
-                        "verdict": Verdict.IE.value,
-                        "summary": "This problem has been deleted before judging started.",
-                        "tests": {"total": 0, "passed": 0, "failed_test": None},
-                        "test_results": [],
-                        "resources": {"time_ms": 0, "memory_kb": None},
-                    }
-                ),
-            )
+            .scalars()
+            .all()
         )
+        from minioj.submissions import sync_judge_run
+
+        for submission_id in cancelled:
+            sync_judge_run(db, submission_id)
         db.execute(
             update(TestcaseBuild)
             .where(

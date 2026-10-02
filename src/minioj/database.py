@@ -175,6 +175,19 @@ def init_db() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE problems ADD COLUMN deleted_at DATETIME"
             )
+        if "checker" not in problem_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE problems ADD COLUMN checker VARCHAR(32) NOT NULL DEFAULT 'lines'"
+            )
+        for checker_column, checker_type in (
+            ("checker_name", "VARCHAR(100)"),
+            ("checker_bundle", "TEXT"),
+            ("checker_sha256", "VARCHAR(64)"),
+        ):
+            if checker_column not in problem_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE problems ADD COLUMN {checker_column} {checker_type}"
+                )
         testcase_columns = {
             column["name"] for column in inspect(connection).get_columns("testcases")
         }
@@ -214,3 +227,49 @@ def init_db() -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE submissions ADD COLUMN problem_revision INTEGER NOT NULL DEFAULT 1"
             )
+        user_columns = {
+            column["name"] for column in inspect(connection).get_columns("users")
+        }
+        if "avatar_key" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN avatar_key VARCHAR(80)"
+            )
+        if "contest_id" not in submission_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE submissions ADD COLUMN contest_id INTEGER REFERENCES contests(id)"
+            )
+        if "judge_generation" not in submission_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE submissions ADD COLUMN judge_generation INTEGER NOT NULL DEFAULT 1"
+            )
+        for request_column in ("idempotency_key_hash", "request_payload_sha256"):
+            if request_column not in submission_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE submissions ADD COLUMN {request_column} VARCHAR(64)"
+                )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_submission_user_request "
+            "ON submissions (user_id, idempotency_key_hash)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_submissions_contest_id ON submissions (contest_id)"
+        )
+        migrated = connection.exec_driver_sql(
+            "SELECT name FROM schema_migrations WHERE name = 'roles-v2'"
+        ).first()
+        if migrated is None:
+            connection.exec_driver_sql(
+                "UPDATE users SET role = 'system' WHERE role = 'admin'"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO schema_migrations (name, applied_at) VALUES ('roles-v2', CURRENT_TIMESTAMP)"
+            )
+        connection.exec_driver_sql("""
+            INSERT INTO submission_judge_runs
+                (submission_id, generation, problem_revision, trigger_type, triggered_by,
+                 status, verdict, compile_result, judge_result, started_at, finished_at, created_at)
+            SELECT s.id, s.judge_generation, s.problem_revision, 'initial', s.user_id,
+                   s.status, s.verdict, s.compile_result, s.judge_result, s.started_at, s.finished_at, s.created_at
+            FROM submissions s WHERE NOT EXISTS
+                (SELECT 1 FROM submission_judge_runs r WHERE r.submission_id = s.id)
+        """)

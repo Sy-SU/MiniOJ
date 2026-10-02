@@ -128,15 +128,38 @@ def test_fast_user_exit_codes_are_runtime_errors_not_timeouts(monkeypatch, exit_
 
 
 @pytest.mark.parametrize("exit_code", [137, 143])
-def test_timeout_wrapper_status_is_tle_at_the_limit(monkeypatch, exit_code):
+def test_explicit_supervisor_timeout_is_preserved(monkeypatch, exit_code):
     judge = DockerJudge("test-image")
     monkeypatch.setattr(
         judge,
         "_run_limited",
-        lambda *_args, **_kwargs: process(exit_code=exit_code, time_ms=1000),
+        lambda *_args, **_kwargs: process(
+            exit_code=exit_code, time_ms=1000, timed_out=True
+        ),
     )
     result = judge.execute(settings.jobs_dir, "", 1000, 64)
     assert result.timed_out is True
+
+
+def test_slow_user_exit_137_does_not_imply_a_timeout(monkeypatch):
+    judge = DockerJudge("test-image")
+    monkeypatch.setattr(
+        judge, "_run_limited", lambda *a, **kw: process(exit_code=137, time_ms=1000)
+    )
+    assert judge.execute(settings.jobs_dir, "", 1000, 64).timed_out is False
+
+
+@pytest.mark.parametrize(
+    "checker, actual, expected",
+    [
+        ("yesno", "yEs\nNO\n", "YES no"),
+        ("tokens", "1\n2  3", "1 2 3"),
+    ],
+)
+def test_imported_checker_is_used(monkeypatch, checker, actual, expected):
+    judge = configured_judge(monkeypatch, process(stdout=actual))
+    _, result = judge.judge("source", [("", expected)], 1000, 64, checker=checker)
+    assert result["verdict"] == "AC"
 
 
 def test_missing_memory_sample_is_preserved_as_unknown(monkeypatch):

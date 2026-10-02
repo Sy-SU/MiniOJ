@@ -1,30 +1,61 @@
-{% extends "base.html" %}
+{% extends layout_template|default('base.html') %}
 {% block title %}{{ submission.id }} · MiniOJ{% endblock %}
 {% block content %}
 <div class="page-heading">
   <div><p class="eyebrow mono">{{ submission.id }}</p><h1>Submission result</h1></div>
   <span id="submission-verdict" class="verdict verdict-large verdict-{{ submission.verdict or submission.status }}">{{ submission.verdict or submission.status }}</span>
 </div>
-{% if submission.problem_warning %}<div class="alert alert-warning" role="alert">{{ submission.problem_warning }}</div>{% endif %}
+{% if can(current_user, 'rejudge') %}<div class="actions submission-actions"><a href="{{ base_path }}/manage/submissions/{{ submission.id }}">Management view</a>{% if submission.status == 'FINISHED' %}<form method="post" action="{{ base_path }}/manage/submissions/{{ submission.id }}/rejudge" onsubmit="return confirm('Rejudge submission #{{ submission.id }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-danger" type="submit">Rejudge</button></form>{% else %}<span class="muted">Judging in progress</span>{% endif %}</div>{% endif %}
+{% if submission.contest_id %}<p>Contest: <a href="{{ base_path }}/contests/{{ submission.contest_id }}">{{ submission.contest.title }}</a></p>{% endif %}
 <div class="stats-grid">
   <div class="stat"><span>Problem</span><strong><a href="{{ base_path }}/problems/{{ submission.problem_id }}">{{ submission.problem.title }}</a></strong></div>
   <div class="stat"><span>Language</span><strong>{{ submission.language }}</strong></div>
-  <div class="stat"><span>Time</span><strong>{% if judge_result and judge_result.resources %}{{ judge_result.resources.time_ms }} ms{% else %}—{% endif %}</strong></div>
+  <div class="stat"><span>{% if submission.verdict == 'CE' %}Compile time{% else %}Time{% endif %}</span><strong>{% if judge_result and judge_result.resources %}{{ judge_result.resources.time_ms }} ms{% else %}—{% endif %}</strong></div>
   <div class="stat"><span>Memory</span><strong>{% if judge_result and judge_result.resources and judge_result.resources.memory_kb is not none %}{{ judge_result.resources.memory_kb }} KB{% else %}—{% endif %}</strong></div>
 </div>
 {% if judge_result and submission.status == 'FINISHED' %}
 <section class="panel detail-section">
   <h2>{{ judge_result.summary }}</h2>
   {% if judge_result.tests %}<p class="muted">Passed {{ judge_result.tests.passed }} of {{ judge_result.tests.total }} test(s).</p>{% endif %}
-  {% if judge_result.failure %}
-    <p class="muted">First failed test: {{ judge_result.failure.test_index }}</p>
-    {% if judge_result.failure.input is defined %}
-    <div class="failure-grid">
-      <div><h3>Input</h3><pre>{{ judge_result.failure.input }}</pre></div>
-      <div><h3>Expected</h3><pre>{{ judge_result.failure.expected }}</pre></div>
-      <div><h3>Actual</h3><pre>{{ judge_result.failure.actual }}</pre></div>
-    </div>
-    {% endif %}
+  {% if testcase_sections %}
+  {% for section in testcase_sections %}
+  <h3 id="{{ section.id }}-results-heading">{{ section.title }}</h3>
+  <div class="table-wrap testcase-results-wrap" role="region" aria-labelledby="{{ section.id }}-results-heading" tabindex="0">
+    <table class="testcase-results-table" id="{{ section.id }}-results">
+      <caption class="sr-only">{{ section.title }}: status, run time in milliseconds and peak memory in KB. Available data previews can be opened using the test number.</caption>
+      <thead><tr><th scope="col">Test</th><th scope="col">Status</th><th scope="col">Run time</th><th scope="col">Peak memory</th></tr></thead>
+      <tbody>
+        {% for row in section.rows %}
+        <tr data-test-index="{{ row.test_index }}">
+          <th scope="row" class="mono">{% if row.preview is not none %}<button type="button" class="testcase-preview-toggle" aria-label="Preview test #{{ row.test_index }}" aria-controls="testcase-preview-{{ row.test_index }}" aria-expanded="false">#{{ row.test_index }}</button>{% else %}#{{ row.test_index }}{% endif %}</th>
+          <td><span class="verdict verdict-{{ row.status }}">{% if row.status == 'NOT_RUN' %}Not run{% elif row.status == 'NOT_RECORDED' %}Not recorded{% else %}{{ row.status }}{% endif %}</span></td>
+          <td class="mono">{% if row.time_ms is not none %}{{ row.time_ms }} ms{% else %}—{% endif %}</td>
+          <td class="mono">{% if row.memory_kb is not none %}{{ row.memory_kb }} KB{% else %}—{% endif %}</td>
+        </tr>
+        {% if row.preview is not none %}
+        <tr class="testcase-preview-row" id="testcase-preview-{{ row.test_index }}" hidden><td colspan="4">
+          <div class="testcase-preview">
+            <p class="muted">Data preview: first 1 KB (1024 bytes) per field; ... means more data is not displayed.</p>
+            <div class="failure-grid">
+              <div><h5>Input</h5><pre>{{ row.preview.input }}{% if row.preview.input_truncated %}...{% endif %}</pre></div>
+              <div><h5>Expected</h5><pre>{{ row.preview.expected }}{% if row.preview.expected_truncated %}...{% endif %}</pre></div>
+              {% if row.preview.actual is defined %}<div><h5>Actual</h5><pre>{{ row.preview.actual }}{% if row.preview.actual_truncated %}...{% endif %}</pre></div>{% endif %}
+            </div>
+          </div>
+        </td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+  <p class="muted testcase-results-note">Time and peak memory are per test; unavailable measurements are shown as —.</p>
+  {% elif testcase_sections is defined and feedback_policy != 'verdict_only' and judge_result.test_results is defined %}
+  <p class="muted">No per-test results are available for this submission.</p>
+  {% elif feedback_policy == 'verdict_only' %}
+  <p class="muted">Per-test results are hidden by the active Feedback Mode.</p>
+  {% elif judge_result.tests and judge_result.tests.total %}
+  <p class="muted">Per-test measurements were not stored for this submission. Resubmit to collect them.</p>
   {% endif %}
 </section>
 {% elif submission.status != 'FINISHED' %}
@@ -33,11 +64,15 @@
 {% if compile_result and not compile_result.success %}
 <section class="panel detail-section"><h2>Compile log</h2>{% if compile_result.stderr is defined %}<pre class="log">{{ compile_result.stderr }}</pre>{% else %}<p class="muted">Compile diagnostics are hidden by the active Feedback Mode.</p>{% endif %}{% if compile_result.output_truncated %}<div class="alert alert-warning">Compile output was truncated at the configured byte limit.</div>{% endif %}</section>
 {% endif %}
-<section class="panel detail-section"><h2>Source code</h2><pre class="source-view"><code>{{ submission.source_code }}</code></pre></section>
+<section class="panel detail-section source-preview">
+  <div class="section-heading"><h2>Source code</h2><div class="source-actions"><span class="muted">{{ submission.language }}</span><button class="button button-small button-secondary" type="button" data-copy-source="submission-source" disabled>Copy code</button><span class="copy-status muted" role="status" aria-live="polite"></span></div></div>
+  <pre class="source-view" tabindex="0" aria-label="Submitted source code"><code id="submission-source" data-language="{{ submission.language }}">{{ submission.source_code }}</code></pre>
+</section>
+<section class="panel detail-section"><h2>Judge History</h2><div class="table-wrap"><table><thead><tr><th>Run</th><th>Trigger</th><th>By</th><th>Verdict / Status</th><th>Triggered (UTC)</th><th>Finished (UTC)</th></tr></thead><tbody>{% for run in judge_history %}<tr><td><a href="{{ base_path }}{% if layout_template == 'management_base.html' %}/manage{% endif %}/submissions/{{ submission.id }}/history/{{ run.id }}">#{{ run.generation }}</a></td><td>{{ run.trigger_type }}</td><td>{{ run.actor.username if run.actor else '—' }}</td><td>{{ run.verdict or run.status }}</td><td>{{ run.created_at }}</td><td>{{ run.finished_at or '—' }}</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
 {% block scripts %}
 {% if submission.status != 'FINISHED' %}
 <script>window.MINIOJ_SUBMISSION = {basePath: {{ base_path|tojson }}, submissionId: {{ submission.id }}};</script>
-<script src="{{ url_for('static', path='/submission.js') }}"></script>
 {% endif %}
+<script src="{{ url_for('static', path='/submission.js') }}"></script>
 {% endblock %}

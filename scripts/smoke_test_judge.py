@@ -75,8 +75,8 @@ int main() { for (;;) std::cout << \"0123456789abcdef\\n\"; }
         "OLE",
         """#include <iostream>
 #include <string>
-int main() { std::cout << std::string(2 * 1024 * 1024, 'x'); }
-""",
+int main() { std::cout << std::string(OUTPUT_LIMIT_BYTES + 1, 'x'); }
+""".replace("OUTPUT_LIMIT_BYTES", str(settings.output_limit_bytes)),
     ),
 ]
 

@@ -49,7 +49,7 @@ def setup_history(client):
     return admin_id, token, problem.id, response.json()["submission_id"]
 
 
-def test_revision_warning_only_affects_older_submissions_and_noop_is_stable(client):
+def test_internal_revisions_remain_without_page_warnings_and_noop_is_stable(client):
     _, token, pid, sid = setup_history(client)
     login(client, "HistoryAdmin")
     assert (
@@ -64,10 +64,14 @@ def test_revision_warning_only_affects_older_submissions_and_noop_is_stable(clie
         == 200
     )
     assert (
-        "This problem has been modified since" in client.get(f"/submissions/{sid}").text
+        "This problem has been modified since"
+        not in client.get(f"/submissions/{sid}").text
     )
-    assert "This problem has been modified since" in client.get("/submissions").text
-    assert "This problem has been modified" in client.get(f"/problems/{pid}").text
+    assert "This problem has been modified since" not in client.get("/submissions").text
+    assert "This problem has been modified" not in client.get(f"/problems/{pid}").text
+    with SessionLocal() as db:
+        row = db.get(Submission, sid)
+        assert row.problem_revision != row.problem.revision
     fresh = client.post(
         "/api/v1/submissions",
         headers=headers,
@@ -96,8 +100,11 @@ def test_revision_warning_only_affects_older_submissions_and_noop_is_stable(clie
         )
     assert (
         "This problem has been modified since"
-        in client.get(f"/submissions/{fresh}").text
+        not in client.get(f"/submissions/{fresh}").text
     )
+    with SessionLocal() as db:
+        row = db.get(Submission, fresh)
+        assert row.problem_revision != row.problem.revision
 
 
 def test_web_edit_and_delete_keep_results_and_hide_problem_everywhere(client):
@@ -122,7 +129,7 @@ def test_web_edit_and_delete_keep_results_and_hide_problem_everywhere(client):
         ).status_code
         == 303
     )
-    assert "modified since" in client.get(f"/submissions/{sid}").text
+    assert "modified since" not in client.get(f"/submissions/{sid}").text
     assert (
         client.post(
             f"/admin/problems/{pid}/delete",
@@ -140,7 +147,8 @@ def test_web_edit_and_delete_keep_results_and_hide_problem_everywhere(client):
             assert pid not in page.text
     tombstone = client.get(f"/problems/{pid}")
     assert tombstone.status_code == 410
-    assert "This problem has been deleted" in tombstone.text
+    assert "Problem not found" in tombstone.text
+    assert "The requested problem does not exist." in tombstone.text
     assert "Updated statement" not in tombstone.text
     for path in (
         f"/api/v1/problems/{pid}",
@@ -171,8 +179,8 @@ def test_web_edit_and_delete_keep_results_and_hide_problem_everywhere(client):
         == 409
     )
     detail = client.get(f"/submissions/{sid}")
-    assert "This problem has been deleted" in detail.text
-    assert "Original result" in detail.text
+    assert "This problem has been deleted" not in detail.text
+    assert "Accepted." in detail.text
     assert (
         client.get(f"/api/v1/submissions/{sid}", headers=bearer(token)).json()[
             "verdict"
@@ -183,8 +191,14 @@ def test_web_edit_and_delete_keep_results_and_hide_problem_everywhere(client):
         client.get(
             f"/api/v1/agent/submissions/{sid}/feedback", headers=bearer(token)
         ).json()["summary"]
-        == "Original result"
+        == "Accepted."
     )
+    with SessionLocal() as db:
+        # Exposure is sanitized, but editing/deleting never rewrites saved results.
+        assert (
+            json.loads(db.get(Submission, sid).judge_result)["summary"]
+            == "Original result"
+        )
     assert (
         client.get(f"/api/v1/submissions/{sid}", headers=bearer(stranger)).status_code
         == 404
@@ -250,9 +264,10 @@ def test_running_judge_keeps_captured_tests_when_problem_changes(
     with SessionLocal() as db:
         submission = db.get(Submission, sid)
         assert submission.verdict == "AC"
-        assert (
-            "modified" if action == "edit" else "deleted"
-        ) in submission.problem_warning
+        if action == "edit":
+            assert submission.problem_revision != submission.problem.revision
+        else:
+            assert submission.problem.deleted_at is not None
 
 
 @pytest.mark.parametrize("action", ["edit", "delete"])
@@ -358,4 +373,4 @@ def test_failed_edits_and_deletes_do_not_change_revision_or_queued_submission(
         )
         submission = db.get(Submission, sid)
         assert submission.status == "QUEUED"
-        assert submission.problem_warning is None
+        assert submission.problem_revision == problem.revision

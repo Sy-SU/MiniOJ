@@ -239,12 +239,14 @@ def test_stale_worker_job_directories_are_removed():
     stale_judge = settings.jobs_dir / "judge-stale"
     stale_build = settings.jobs_dir / "testcase-build-stale"
     stale_run = settings.jobs_dir / "run-stale"
+    stale_checker = settings.jobs_dir / "checker-stale"
     unrelated = settings.jobs_dir / "other-active"
-    for path in (stale_judge, stale_build, stale_run, unrelated):
+    for path in (stale_judge, stale_build, stale_run, stale_checker, unrelated):
         path.mkdir(exist_ok=True)
-    assert cleanup_stale_job_directories() == 3
+    assert cleanup_stale_job_directories() == 4
     assert not stale_judge.exists()
     assert not stale_build.exists()
     assert not stale_run.exists()
+    assert not stale_checker.exists()
     assert unrelated.exists()
     unrelated.rmdir()

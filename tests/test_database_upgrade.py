@@ -120,6 +120,10 @@ def test_existing_problem_database_gains_standard_solution_metadata(
             "standard_updated_at",
             "revision",
             "deleted_at",
+            "checker",
+            "checker_name",
+            "checker_bundle",
+            "checker_sha256",
         } <= problem_columns
         assert inspect(legacy_engine).has_table("testcase_builds")
         with legacy_engine.connect() as connection:
@@ -128,6 +132,15 @@ def test_existing_problem_database_gains_standard_solution_metadata(
                     "SELECT id, revision, deleted_at FROM problems"
                 ).one()
             ) == ("legacy", 1, None)
+            assert (
+                connection.exec_driver_sql("SELECT checker FROM problems").scalar()
+                == "lines"
+            )
+            assert tuple(
+                connection.exec_driver_sql(
+                    "SELECT checker_name, checker_bundle, checker_sha256 FROM problems"
+                ).one()
+            ) == (None, None, None)
     finally:
         legacy_engine.dispose()
 

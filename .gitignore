@@ -9,12 +9,19 @@ build/
 dist/
 *.egg-info/
 htmlcov/
-database/*.db
-database/*.db-*
-database/backups/
+database/*
+!database/.gitkeep
 data/jobs/*
 !data/jobs/.gitkeep
-data/problems/*/tests/*.in
-data/problems/*/tests/*.out
+data/avatars/
+# Runtime problem files include statements/assets/checkers, not only .in/.out.
+data/problems/*
+!data/problems/.gitkeep
 
-store/
+store/*
+!store/__init__.py
+!store/cf_import/
+store/cf_import/*
+!store/cf_import/*.py
+!store/cf_import/README.md
+!store/cf_import/config.example.toml

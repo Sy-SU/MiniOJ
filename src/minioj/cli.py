@@ -14,7 +14,7 @@ def create_admin(username: str, email: str, password: str) -> None:
         create_administrator(username, email, password)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    print(f"Created admin user {username.strip()!r} (role=admin).")
+    print(f"Created system administrator {username.strip()!r} (role=system).")
     print(f"Database: {engine.url.render_as_string(hide_password=True)}")
     print(f"Sign in at {settings.root_path}/login; do not register this account again.")
 

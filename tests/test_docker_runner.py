@@ -133,3 +133,136 @@ def test_owned_stale_containers_are_removed(monkeypatch):
     judge.cleanup_owned_containers()
     assert calls[0][-1] == "label=minioj.owner=worker"
     assert calls[1] == ["docker", "rm", "--force", "old-one", "old-two"]
+
+
+@pytest.mark.parametrize("cpu_ms, wall_ms", [(2, 250), (85, 500)])
+def test_execution_uses_trusted_cpu_report_not_host_elapsed(
+    monkeypatch, tmp_path, cpu_ms, wall_ms
+):
+    report = tmp_path / "result.json"
+    report.write_text(
+        json.dumps(
+            {
+                "cpu_time_ms": cpu_ms,
+                "wall_time_ms": wall_ms,
+                "exit_code": 0,
+                "timed_out": False,
+                "setup_error": False,
+                "memory_kb": 4096,
+            }
+        )
+    )
+    removed = []
+
+    def fake_run(command, **kwargs):
+        if command[1] == "create":
+            return subprocess.CompletedProcess(
+                command, 0, stdout="container-id", stderr=""
+            )
+        if command[1] == "inspect":
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps({"ExitCode": 0}), stderr=""
+            )
+        if command[1] == "rm":
+            removed.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: _FinishedProcess())
+    judge = DockerJudge("image")
+    monkeypatch.setattr(judge, "_read_container_memory_peak", lambda _id: None)
+    result = judge._run_limited(
+        ["docker", "create"], "cpu", "", 10000, 1024, metrics_path=report
+    )
+    assert result.time_ms == cpu_ms
+    assert result.wall_time_ms == wall_ms
+    assert result.memory_kb == 4096
+    assert removed
+
+
+def test_execution_supervisor_has_separate_report_mount(tmp_path):
+    command = DockerJudge("image")._container_command(
+        "cpu",
+        128,
+        "/job",
+        ["supervisor"],
+        read_only_mount=True,
+        metrics_path=tmp_path / "report.json",
+    )
+    assert command[command.index("--user") + 1] == "0:0"
+    assert "type=bind,source=/job,target=/work,readonly" in command
+    assert (
+        f"type=bind,source={tmp_path}/report.json,target=/minioj-result.json" in command
+    )
+    assert "--privileged" not in command
+    assert "stack=134217728:134217728" in command
+
+
+def test_worker_rejects_an_old_image_without_cpu_accounting(monkeypatch):
+    monkeypatch.setattr(
+        "minioj.judge.runner.shutil.which", lambda _name: "/usr/bin/docker"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout="<no value>\n", stderr=""
+        ),
+    )
+    with pytest.raises(InfrastructureError, match="CPU supervisor"):
+        DockerJudge("old-image").ensure_available()
+
+
+@pytest.mark.parametrize("valid_report", [True, False])
+def test_docker_transport_timeout_is_not_a_user_tle(
+    monkeypatch, tmp_path, valid_report
+):
+    report = tmp_path / "result.json"
+    report.write_text(
+        json.dumps(
+            {
+                "cpu_time_ms": 2,
+                "wall_time_ms": 2,
+                "exit_code": 0,
+                "timed_out": False,
+                "setup_error": False,
+                "memory_kb": None,
+            }
+        )
+        if valid_report
+        else ""
+    )
+
+    class HungAttach:
+        returncode = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, **kwargs):
+            return 0
+
+    removed = []
+
+    def fake_run(command, **kwargs):
+        if command[1] == "inspect":
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps({"ExitCode": 0}), stderr=""
+            )
+        if command[1] == "rm":
+            removed.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="container-id", stderr="")
+
+    ticks = iter([0.0, 10.0, 10.0])
+    monkeypatch.setattr("minioj.judge.runner.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: HungAttach())
+    judge = DockerJudge("image")
+    monkeypatch.setattr(judge, "_read_container_memory_peak", lambda _id: None)
+    monkeypatch.setattr(judge, "_read_container_cpu_ms", lambda _id: 2)
+    with pytest.raises(InfrastructureError):
+        judge._run_limited(
+            ["docker", "create"], "watchdog", "", 1000, 1024, metrics_path=report
+        )
+    assert removed

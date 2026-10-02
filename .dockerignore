@@ -5,7 +5,10 @@ __pycache__
 .pytest_cache
 .coverage
 .ruff_cache
-database/*.db
-database/*.db-*
-database/backups/
+database/*
+!database/.gitkeep
 data/jobs/*
+data/avatars/
+data/problems/*
+!data/problems/.gitkeep
+store/

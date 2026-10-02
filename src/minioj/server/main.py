@@ -4,14 +4,29 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from minioj.accounts import create_administrator
 from minioj.config import settings
 from minioj.database import init_db
 from minioj.server.api import router as api_router
+from minioj.server.contests import (
+    api_router as contest_api_router,
+)
+from minioj.server.contests import (
+    router as contest_router,
+)
+from minioj.server.errors import (
+    api_http_exception_handler,
+    api_internal_exception_handler,
+    api_validation_exception_handler,
+)
+from minioj.server.management import router as management_router
 from minioj.server.middleware import AccountBodyLimitMiddleware
+from minioj.server.profiles import router as profile_router
 from minioj.server.web import router as web_router
 
 
@@ -55,6 +70,9 @@ app.add_middleware(
     max_age=60 * 60 * 24 * 14,
 )
 app.add_middleware(AccountBodyLimitMiddleware)
+app.add_exception_handler(StarletteHTTPException, api_http_exception_handler)
+app.add_exception_handler(RequestValidationError, api_validation_exception_handler)
+app.add_exception_handler(Exception, api_internal_exception_handler)
 app.mount(
     "/static",
     StaticFiles(directory=str(settings.static_dir)),
@@ -62,6 +80,10 @@ app.mount(
 )
 app.include_router(api_router)
 app.include_router(web_router)
+app.include_router(management_router)
+app.include_router(profile_router)
+app.include_router(contest_router)
+app.include_router(contest_api_router)
 
 
 @app.get("/healthz", include_in_schema=False)

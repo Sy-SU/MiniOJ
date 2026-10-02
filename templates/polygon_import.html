@@ -1,0 +1,22 @@
+{% extends layout_template|default("base.html") %}
+{% block title %}Import Polygon · MiniOJ{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Administration</p><h1>Import Polygon package</h1></div><a href="{{ base_path }}/manage">Back to admin</a></div>
+<section class="panel detail-section">
+  <p>Choose a full Polygon ZIP containing the HTML statement and generated input/answer files. Imports create a new problem with its limits, samples, tests, statement images and main C++ solution.</p>
+  <p class="muted">Existing IDs are preserved. Standard input/output problems support standard testlib checkers and custom C++ testlib checkers included in the ZIP. Scoring checkers and interactive problems are not supported.</p>
+  {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ base_path }}/manage/problems/import" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Polygon ZIP <input type="file" name="package_file" accept=".zip,application/zip" required></label>
+    <p class="muted">Maximum upload: {{ polygon_archive_limit_bytes // 1048576 }} MiB. On errors, choose the file again.</p>
+    <label>Problem ID (optional)<input name="problem_id" value="{{ problem_id or '' }}" maxlength="80" placeholder="Use the package short name"></label>
+    <label>Statement language<select name="language">
+      <option value="auto" {% if not language or language == 'auto' %}selected{% endif %}>Automatic (Chinese, then English)</option>
+      <option value="chinese" {% if language == 'chinese' %}selected{% endif %}>Chinese</option>
+      <option value="english" {% if language == 'english' %}selected{% endif %}>English</option>
+    </select></label>
+    <div><button class="button" type="submit">Import problem</button></div>
+  </form>
+</section>
+{% endblock %}

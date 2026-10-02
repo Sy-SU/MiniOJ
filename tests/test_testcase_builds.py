@@ -57,7 +57,7 @@ def create_admin_and_problem(client, problem_id: str = "generator-case") -> int:
 
 def upload_standard(client, problem_id: str = "generator-case") -> str:
     editor = client.get(f"/admin/problems/{problem_id}/edit")
-    assert f"/admin/problems/{problem_id}/standard-solution" in editor.text
+    assert f"/manage/problems/{problem_id}/standard-solution" in editor.text
     token = csrf(editor.text)
     response = client.post(
         f"/admin/problems/{problem_id}/standard-solution",
@@ -67,8 +67,8 @@ def upload_standard(client, problem_id: str = "generator-case") -> str:
     )
     assert response.status_code == 303
     editor = client.get(f"/admin/problems/{problem_id}/edit")
-    assert f"/admin/problems/{problem_id}/testcase-builds/input" in editor.text
-    assert f"/admin/problems/{problem_id}/testcase-builds/generator" in editor.text
+    assert f"/manage/problems/{problem_id}/testcase-builds/input" in editor.text
+    assert f"/manage/problems/{problem_id}/testcase-builds/generator" in editor.text
     return token
 
 
@@ -196,7 +196,8 @@ def test_build_can_finish_after_first_submission(client, monkeypatch):
     with SessionLocal() as db:
         assert db.get(BuildModel, build_id).status == "FINISHED"
         assert db.query(CaseModel).count() == 1
-        assert "modified" in db.query(Submission).one().problem_warning
+        submission = db.query(Submission).one()
+        assert submission.problem_revision != submission.problem.revision
         assert db.get(User, admin_id) is not None
 
 

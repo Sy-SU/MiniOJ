@@ -67,7 +67,7 @@ def test_first_public_user_cannot_request_admin_role(client):
 def test_cli_admin_can_sign_in_and_access_admin_page(client, capsys):
     create_admin(" admin ", " OWNER@EXAMPLE.COM ", PASSWORD)
     output = capsys.readouterr().out
-    assert "role=admin" in output
+    assert "role=system" in output
     assert "Database:" in output
     page = client.get("/login")
     response = client.post(
@@ -83,7 +83,7 @@ def test_cli_admin_can_sign_in_and_access_admin_page(client, capsys):
     assert client.get("/admin").status_code == 200
     with SessionLocal() as db:
         user = db.query(User).one()
-        assert user.role == "admin"
+        assert user.role == "system"
         assert user.email == "owner@example.com"
 
 
@@ -100,7 +100,7 @@ def test_bootstrap_is_idempotent_and_preserves_password(monkeypatch):
     _bootstrap_admin()
     with SessionLocal() as db:
         user = db.query(User).one()
-        assert user.role == "admin"
+        assert user.role == "system"
         assert verify_password(PASSWORD, user.password_hash)
 
 
@@ -133,7 +133,7 @@ def test_bootstrap_reports_conflicts_without_promoting_accounts(
         _bootstrap_admin()
     with SessionLocal() as db:
         user = db.query(User).one()
-        assert user.role == role
+        assert user.role == ("system" if role == "admin" else role)
         assert user.is_active == active
 
 

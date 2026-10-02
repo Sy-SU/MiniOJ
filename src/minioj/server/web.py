@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+import logging
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,13 +14,18 @@ from starlette.formparsers import MultiPartException
 
 from minioj.config import settings
 from minioj.database import get_db
-from minioj.feedback import submission_feedback
+from minioj.feedback import submission_feedback, submission_testcase_sections
 from minioj.models import ApiToken, Problem, Submission, TestcaseBuild, User
+from minioj.permissions import Permission, can, require_permission
+from minioj.polygon import import_polygon, parse_polygon, problem_asset_path
 from minioj.problems import (
+    PROBLEM_PAGE_SIZE,
+    ProblemSort,
     add_testcase,
     delete_problem,
     delete_testcase,
     ensure_problem_mutable,
+    problem_list_query,
     update_problem,
     update_testcase,
 )
@@ -51,7 +60,17 @@ from minioj.testcase_builds import (
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=str(settings.templates_dir))
-templates.env.filters["markdown"] = render_markdown
+logger = logging.getLogger("minioj.web")
+
+
+@pass_context
+def _markdown_for_request(context, value):
+    request = context.get("request")
+    return render_markdown(value, request.scope.get("root_path", "") if request else "")
+
+
+templates.env.filters["markdown"] = _markdown_for_request
+templates.env.globals["can"] = can
 
 
 def _user(request: Request, db: Session) -> User | None:
@@ -64,13 +83,20 @@ def _user(request: Request, db: Session) -> User | None:
 
 
 def _context(request: Request, db: Session, **values: object) -> dict:
+    path = request.url.path.removeprefix(str(request.scope.get("root_path", "")))
+    management = path.startswith(("/manage", "/admin"))
     return {
+        "layout_template": "management_base.html" if management else "base.html",
+        "manage_section": path.split("/")[2]
+        if management and len(path.split("/")) > 2
+        else "dashboard",
         "username_max_length": USERNAME_MAX_LENGTH,
         "email_max_length": EMAIL_MAX_LENGTH,
         "password_max_bytes": PASSWORD_MAX_BYTES,
         "testcase_file_limit_bytes": settings.testcase_file_limit_bytes,
         "source_limit_bytes": settings.source_limit_bytes,
         "generator_max_cases": settings.generator_max_cases,
+        "polygon_archive_limit_bytes": settings.polygon_archive_limit_bytes,
         "request": request,
         "current_user": _user(request, db),
         "csrf_token": csrf_token(request.session),
@@ -92,6 +118,8 @@ def _external_path(request: Request, path: str) -> str:
 
 
 def _redirect(request: Request, path: str) -> RedirectResponse:
+    if "/manage" in request.url.path and path.startswith("/admin"):
+        path = "/manage" + path[len("/admin") :]
     return RedirectResponse(_external_path(request, path), status_code=303)
 
 
@@ -113,9 +141,14 @@ def _require_admin(request: Request, db: Session) -> User | RedirectResponse:
     user = _require_user(request, db)
     if isinstance(user, RedirectResponse):
         return user
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
+    return require_permission(user, Permission.CONTENT)
+
+
+def _require_system(request: Request, db: Session) -> User | RedirectResponse:
+    user = _require_user(request, db)
+    if isinstance(user, RedirectResponse):
+        return user
+    return require_permission(user, Permission.SYSTEM)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -254,14 +287,38 @@ async def logout(request: Request) -> RedirectResponse:
 
 
 @router.get("/problems", response_class=HTMLResponse)
-def problems(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
-    rows = db.scalars(
-        select(Problem).where(Problem.deleted_at.is_(None)).order_by(Problem.id)
-    ).all()
+def problems(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    sort: ProblemSort = "default",
+    q: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    query = problem_list_query(q, sort)
+    total = db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    pages = max(1, (total + PROBLEM_PAGE_SIZE - 1) // PROBLEM_PAGE_SIZE)
+    rows = (
+        db.scalars(
+            query.offset((page - 1) * PROBLEM_PAGE_SIZE).limit(PROBLEM_PAGE_SIZE)
+        ).all()
+        if page <= pages
+        else []
+    )
     return templates.TemplateResponse(
         request=request,
         name="problems.html",
-        context=_context(request, db, problems=rows),
+        context=_context(
+            request,
+            db,
+            problems=rows,
+            total=total,
+            page=page,
+            pages=pages,
+            sort=sort,
+            q=q,
+            previous_url=str(request.url.include_query_params(page=page - 1)),
+            next_url=str(request.url.include_query_params(page=page + 1)),
+        ),
     )
 
 
@@ -270,14 +327,12 @@ def problem_detail(
     problem_id: str, request: Request, db: Session = Depends(get_db)
 ) -> HTMLResponse:
     problem = db.get(Problem, problem_id)
-    if problem is None:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    if problem.deleted_at is not None:
+    if problem is None or problem.deleted_at is not None:
         return templates.TemplateResponse(
             request=request,
-            name="problem_deleted.html",
-            context=_context(request, db, problem=problem),
-            status_code=410,
+            name="problem_not_found.html",
+            context=_context(request, db),
+            status_code=404 if problem is None else 410,
         )
     return templates.TemplateResponse(
         request=request,
@@ -292,7 +347,7 @@ def submissions(request: Request, db: Session = Depends(get_db)) -> HTMLResponse
     if isinstance(user, RedirectResponse):
         return user
     query = select(Submission).order_by(Submission.created_at.desc()).limit(200)
-    if user.role != "admin":
+    if not can(user, Permission.SUBMISSIONS):
         query = query.where(Submission.user_id == user.id)
     rows = db.scalars(query).all()
     return templates.TemplateResponse(
@@ -310,9 +365,21 @@ def submission_detail(
     if isinstance(user, RedirectResponse):
         return user
     submission = db.get(Submission, submission_id)
-    if submission is None or (submission.user_id != user.id and user.role != "admin"):
+    if submission is None or (
+        submission.user_id != user.id and not can(user, Permission.SUBMISSIONS)
+    ):
         raise HTTPException(status_code=404, detail="Submission not found")
-    judge_result = submission_feedback(submission, settings.feedback_policy)
+    judge_result = submission_feedback(
+        submission,
+        settings.feedback_policy,
+        allow_hidden=can(user, Permission.SUBMISSIONS),
+    )
+    testcase_sections = submission_testcase_sections(
+        submission,
+        judge_result,
+        allow_hidden=can(user, Permission.SUBMISSIONS),
+        show_previews=settings.feedback_policy == "full",
+    )
     compile_result = judge_result.get("compile")
     return templates.TemplateResponse(
         request=request,
@@ -323,7 +390,11 @@ def submission_detail(
             submission=submission,
             compile_result=compile_result,
             judge_result=judge_result,
+            testcase_sections=testcase_sections,
             feedback_policy=settings.feedback_policy,
+            judge_history=sorted(
+                submission.judge_runs, key=lambda run: run.generation, reverse=True
+            ),
         ),
     )
 
@@ -440,9 +511,11 @@ async def web_delete_token(
     token = db.get(ApiToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status_code=404, detail="Token not found")
-    db.delete(token)
+    if token.revoked_at is None:
+        token.revoked_at = datetime.now(UTC)
     db.commit()
-    _flash(request, "Token deleted.")
+    logger.info("Revoked API token %s for user=%s", token.id, user.id)
+    _flash(request, "Token revoked.")
     return _redirect(request, "/settings")
 
 
@@ -451,20 +524,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResp
     admin = _require_admin(request, db)
     if isinstance(admin, RedirectResponse):
         return admin
-    problems = db.scalars(
-        select(Problem).where(Problem.deleted_at.is_(None)).order_by(Problem.id)
-    ).all()
-    users = db.scalars(select(User).order_by(User.created_at.desc())).all()
-    recent = db.scalars(
-        select(Submission).order_by(Submission.created_at.desc()).limit(25)
-    ).all()
-    return templates.TemplateResponse(
-        request=request,
-        name="admin.html",
-        context=_context(
-            request, db, problems=problems, users=users, submissions=recent
-        ),
-    )
+    return _redirect(request, "/manage")
 
 
 @router.get("/admin/problems/new", response_class=HTMLResponse)
@@ -477,6 +537,82 @@ def new_problem_page(request: Request, db: Session = Depends(get_db)) -> HTMLRes
         name="problem_form.html",
         context=_context(request, db, problem=None, action="Create"),
     )
+
+
+@router.get("/admin/problems/import", response_class=HTMLResponse)
+def polygon_import_page(request: Request, db: Session = Depends(get_db)):
+    admin = _require_admin(request, db)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    return templates.TemplateResponse(
+        request=request, name="polygon_import.html", context=_context(request, db)
+    )
+
+
+@router.post("/admin/problems/import", response_class=HTMLResponse)
+async def polygon_import(request: Request, db: Session = Depends(get_db)):
+    admin = _require_admin(request, db)
+    if isinstance(admin, RedirectResponse):
+        return admin
+    form = None
+    try:
+        form = await testcase_form(
+            request,
+            settings.polygon_archive_limit_bytes,
+            body_limit_bytes=settings.polygon_archive_limit_bytes + 64 * 1024,
+        )
+        _check_form_csrf(request, form)
+        data = await uploaded_bytes(
+            form.get("package_file"), settings.polygon_archive_limit_bytes
+        )
+        if data is None:
+            raise ValueError("Select a Polygon ZIP package.")
+        # ZIP parsing and filesystem/database work must not block the event loop.
+        from starlette.concurrency import run_in_threadpool
+
+        package = await run_in_threadpool(
+            parse_polygon,
+            data,
+            str(form.get("problem_id", "")),
+            str(form.get("language", "auto")),
+        )
+        problem = await run_in_threadpool(import_polygon, db, package, admin.id)
+    except (TestcaseFileTooLarge, MultiPartException, ValueError, OSError) as exc:
+        db.rollback()
+        return templates.TemplateResponse(
+            request=request,
+            name="polygon_import.html",
+            context=_context(
+                request,
+                db,
+                error=str(exc),
+                problem_id=str(form.get("problem_id", "")) if form else "",
+                language=str(form.get("language", "auto")) if form else "auto",
+            ),
+            status_code=413 if isinstance(exc, TestcaseFileTooLarge) else 422,
+        )
+    finally:
+        if form is not None:
+            await form.close()
+    _flash(
+        request,
+        f"Polygon problem imported: {len(package.cases)} tests, {package.case_types.count('sample')} samples ({package.language}).",
+    )
+    return _redirect(request, f"/admin/problems/{problem.id}/edit")
+
+
+@router.get("/problems/{problem_id}/assets/{name}")
+def statement_asset(problem_id: str, name: str, db: Session = Depends(get_db)):
+    problem = db.get(Problem, problem_id)
+    if problem is None or problem.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    try:
+        path = problem_asset_path(problem_id, name)
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail="Statement image not found"
+        ) from None
+    return FileResponse(path, headers={"X-Content-Type-Options": "nosniff"})
 
 
 def _problem_form_values(form: object) -> dict:
@@ -662,7 +798,11 @@ async def upload_standard_solution(
     if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     try:
-        form = await testcase_form(request, settings.source_limit_bytes)
+        form = await testcase_form(
+            request,
+            settings.source_limit_bytes,
+            body_limit_bytes=3 * settings.source_limit_bytes + 64 * 1024,
+        )
     except TestcaseFileTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except MultiPartException as exc:
@@ -712,7 +852,11 @@ async def queue_uploaded_testcase_input(
     if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     try:
-        form = await testcase_form(request, settings.testcase_file_limit_bytes)
+        form = await testcase_form(
+            request,
+            settings.testcase_file_limit_bytes,
+            body_limit_bytes=settings.testcase_file_limit_bytes + 64 * 1024,
+        )
     except TestcaseFileTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except MultiPartException as exc:
@@ -752,7 +896,11 @@ async def queue_cpp_generator(
     if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     try:
-        form = await testcase_form(request, settings.source_limit_bytes)
+        form = await testcase_form(
+            request,
+            settings.source_limit_bytes,
+            body_limit_bytes=settings.source_limit_bytes + 64 * 1024,
+        )
     except TestcaseFileTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except MultiPartException as exc:
@@ -798,7 +946,11 @@ async def web_add_testcase(
     if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     try:
-        form = await testcase_form(request, settings.testcase_file_limit_bytes)
+        form = await testcase_form(
+            request,
+            settings.testcase_file_limit_bytes,
+            body_limit_bytes=6 * settings.testcase_file_limit_bytes + 128 * 1024,
+        )
     except TestcaseFileTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except MultiPartException as exc:
@@ -844,7 +996,11 @@ async def web_update_testcase(
     if problem is None or problem.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Problem not found")
     try:
-        form = await testcase_form(request, settings.testcase_file_limit_bytes)
+        form = await testcase_form(
+            request,
+            settings.testcase_file_limit_bytes,
+            body_limit_bytes=6 * settings.testcase_file_limit_bytes + 128 * 1024,
+        )
     except TestcaseFileTooLarge as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except MultiPartException as exc:
@@ -926,23 +1082,28 @@ async def web_delete_problem(
 async def update_user(
     user_id: int, request: Request, db: Session = Depends(get_db)
 ) -> RedirectResponse:
-    admin = _require_admin(request, db)
+    admin = _require_system(request, db)
     if isinstance(admin, RedirectResponse):
         return admin
     form = await request.form()
     _check_form_csrf(request, form)
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
     role = str(form.get("role", "user"))
     active = form.get("is_active") == "on"
-    if role not in {"user", "admin"}:
-        raise HTTPException(status_code=422, detail="Invalid role")
-    if user.id == admin.id and (role != "admin" or not active):
-        _flash(request, "You cannot demote or deactivate your own account.", "error")
-    else:
-        user.role = role
-        user.is_active = active
-        db.commit()
-        _flash(request, f"Updated user {user.username}.")
-    return _redirect(request, "/admin")
+    from minioj.accounts import update_user_access
+
+    update_user_access(db, admin, user_id, role, active)
+    _flash(request, "User access updated.")
+    return _redirect(request, "/manage/users")
+
+
+# Keep old editing endpoints while using the same implementations in the Console.
+for legacy_route in list(router.routes):
+    if legacy_route.path.startswith("/admin/problems/"):
+        router.add_api_route(
+            "/manage" + legacy_route.path[len("/admin") :],
+            legacy_route.endpoint,
+            methods=list(legacy_route.methods),
+            response_class=legacy_route.response_class,
+            name="manage_" + legacy_route.name,
+            include_in_schema=False,
+        )

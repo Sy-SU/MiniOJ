@@ -1,12 +1,12 @@
-{% extends "base.html" %}
+{% extends layout_template|default("base.html") %}
 {% block title %}{{ action }} problem · MiniOJ{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', path='/vendor/katex/katex.min.css') }}">
 {% endblock %}
 {% block content %}
-<div class="page-heading"><div><p class="eyebrow">Problem editor</p><h1>{{ action }} problem</h1></div><a href="{{ base_path }}/admin">Back to admin</a></div>
+<div class="page-heading"><div><p class="eyebrow">Problem editor</p><h1>{{ action }} problem</h1></div><a href="{{ base_path }}/manage">Back to admin</a></div>
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
-{% if action == 'Update' %}<div class="alert alert-warning">Editing this problem or its testcases keeps existing submissions and results. Earlier submissions will show a warning that the problem has been modified.</div>{% endif %}
+{% if action == 'Update' %}<p class="muted">Existing results are retained when you edit this problem. Rejudge a submission to evaluate it with current testcases and limits.</p>{% endif %}
 <nav class="editor-nav" aria-label="Problem editor sections">
   <a href="#problem-content">01 · Problem</a>
   {% if action == 'Update' %}<a href="#standard-solution">02 · Standard solution</a><a href="#testcase-data">03 · Testcases</a><a href="#testcase-builds">04 · Build history</a>{% endif %}
@@ -44,13 +44,14 @@
   {% else %}
   <div class="alert alert-warning">Paste or upload the standard solution before adding inputs or running a generator.</div>
   {% endif %}
-  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/standard-solution" class="form-stack" id="standard-source-form">
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/manage/problems/{{ problem.id }}/standard-solution" class="form-stack" id="standard-source-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="standard-source">Standard solution source <small>Paste or edit C++20 here, at most {{ source_limit_bytes }} UTF-8 bytes. Save this separately from the problem statement.</small></label>
-    <textarea id="standard-source" name="standard_source" class="code-editor standard-editor" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off" required>{{ standard_source_draft if standard_source_draft is defined else (problem.standard_source or '') }}</textarea>
+    <textarea id="standard-source" name="standard_source" class="code-editor standard-editor" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="standard-source-help" required>{{ standard_source_draft if standard_source_draft is defined else (problem.standard_source or '') }}</textarea>
+    <p class="muted editor-key-help" id="standard-source-help">Tab: indent · Shift+Tab: unindent · Esc, then Tab: move focus</p>
     <div><button class="button" type="submit">Save standard solution</button></div>
   </form>
-  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/standard-solution" class="form-stack editor-upload-form" id="standard-file-form">
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/manage/problems/{{ problem.id }}/standard-solution" class="form-stack editor-upload-form" id="standard-file-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <h3>Or upload a source file</h3>
     <label>Standard solution file <small>C++20, UTF-8, at most {{ source_limit_bytes }} bytes. Uploading replaces the saved source above.</small><input type="file" name="standard_file" accept="text/x-c++src,.cc,.cpp,.cxx" required></label>
@@ -65,12 +66,12 @@
     <div class="panel detail-section">
       <div><span class="mono">#{{ testcase.order }}</span> <span class="tag">{{ testcase.type }}</span> <span class="muted">created {{ testcase.created_at or 'before timestamp tracking' }}</span></div>
       <details class="testcase-checksums"><summary>Checksums</summary><div class="muted mono">input {{ testcase.input_sha256 or 'checksum pending' }}<br>output {{ testcase.output_sha256 or 'checksum pending' }}</div></details>
-      <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases/{{ testcase.id }}/edit" class="form-stack testcase-form">
+      <form method="post" action="{{ base_path }}/manage/problems/{{ problem.id }}/testcases/{{ testcase.id }}/edit" class="form-stack testcase-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Visibility<select name="type"><option value="hidden" {% if testcase.type == 'hidden' %}selected{% endif %}>Hidden</option><option value="sample" {% if testcase.type == 'sample' %}selected{% endif %}>Sample (public)</option><option value="generated" {% if testcase.type == 'generated' %}selected{% endif %}>Generated</option></select></label>
         <button class="button button-small button-secondary" type="submit">Update visibility</button>
       </form>
-      <form method="post" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcases/{{ testcase.id }}/delete" onsubmit="return confirm('Delete testcase #{{ testcase.order }}?')">
+      <form method="post" action="{{ base_path }}/manage/problems/{{ problem.id }}/testcases/{{ testcase.id }}/delete" onsubmit="return confirm('Delete testcase #{{ testcase.order }}?')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="link-button danger" type="submit">Delete testcase</button>
       </form>
@@ -82,7 +83,7 @@
   <section class="editor-subsection" aria-labelledby="input-build-heading">
   <h3 id="input-build-heading">Build from an input file</h3>
   <p class="muted">Upload an input; the saved standard solution computes its expected output.</p>
-  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcase-builds/input" class="form-stack testcase-form">
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/manage/problems/{{ problem.id }}/testcase-builds/input" class="form-stack testcase-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Visibility<select name="type"><option value="hidden">Hidden</option><option value="sample">Sample (public)</option></select></label>
     <label>Input file <small>UTF-8, at most {{ testcase_file_limit_bytes }} bytes</small><input type="file" name="input_file" accept="text/plain,.in" required></label>
@@ -92,7 +93,7 @@
   <section class="editor-subsection" aria-labelledby="generator-build-heading">
   <h3 id="generator-build-heading">Build with a C++20 generator</h3>
   <p class="muted">The generator runs once per case. <span class="mono">argv[1]</span> is the seed and <span class="mono">argv[2]</span> is the 1-based case index; stdout becomes testcase input, then the standard solution computes expected output.</p>
-  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/admin/problems/{{ problem.id }}/testcase-builds/generator" class="form-stack testcase-form">
+  <form method="post" enctype="multipart/form-data" action="{{ base_path }}/manage/problems/{{ problem.id }}/testcase-builds/generator" class="form-stack testcase-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Generator file <small>C++20, UTF-8, at most {{ source_limit_bytes }} bytes</small><input type="file" name="generator_file" accept="text/x-c++src,.cc,.cpp,.cxx" required></label>
     <div class="form-row"><label>Case count<input type="number" name="case_count" min="1" max="{{ generator_max_cases }}" value="1" required></label><label>Base seed<input type="number" name="base_seed" min="0" max="2147483647" value="1" required></label></div>

@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">Account</p><h1>Settings</h1></div></div>
 <div class="settings-grid">
+  <section class="panel detail-section"><h2>Avatar</h2><img class="avatar avatar-large" src="{{ base_path }}/users/{{ current_user.username }}/avatar" alt="Your avatar"><form method="post" enctype="multipart/form-data" action="{{ base_path }}/settings/avatar" class="form-stack"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Image <small>PNG, JPEG or WebP, maximum 1 MiB and 4 megapixels.</small><input type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required></label><button class="button button-secondary">Upload avatar</button></form></section>
   <section class="panel detail-section">
     <h2>Profile</h2>
     <form method="post" action="{{ base_path }}/settings/profile" class="form-stack">
@@ -46,7 +47,7 @@
   {% for token in tokens %}
     <div class="token-row">
       <div><strong>{{ token.name }}</strong><span class="mono muted">{{ token.token_preview or 'Preview unavailable (older token)' }}</span><small>Created {{ token.created_at.strftime('%Y-%m-%d') }} · {% if token.revoked_at %}Revoked{% else %}Expires {{ token.expires_at.strftime('%Y-%m-%d') }}{% endif %}</small></div>
-      <form method="post" action="{{ base_path }}/settings/tokens/{{ token.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-danger button-small" type="submit">Delete</button></form>
+      {% if not token.revoked_at %}<form method="post" action="{{ base_path }}/settings/tokens/{{ token.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-danger button-small" type="submit">Revoke</button></form>{% endif %}
     </div>
   {% else %}<div class="empty-state">No API tokens.</div>{% endfor %}
   </div>

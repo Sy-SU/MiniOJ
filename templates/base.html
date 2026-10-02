@@ -11,12 +11,14 @@
   <header class="site-header">
     <nav class="nav shell" aria-label="Main navigation">
       <a class="brand" href="{{ base_path }}/"><span class="brand-mark">M</span>MiniOJ</a>
+      {% if can(current_user, 'content') %}<a class="management-entry" href="{{ base_path }}/manage">管理</a>{% endif %}
       <div class="nav-links">
         <a href="{{ base_path }}/problems">Problems</a>
+        <a href="{{ base_path }}/contests">Contests</a>
         {% if current_user %}
           <a href="{{ base_path }}/submissions">Submissions</a>
           <a href="{{ base_path }}/settings">Settings</a>
-          {% if current_user.role == 'admin' %}<a href="{{ base_path }}/admin">Admin</a>{% endif %}
+          <a class="nav-profile" href="{{ base_path }}/users/{{ current_user.username }}"><img class="avatar avatar-small" src="{{ base_path }}/users/{{ current_user.username }}/avatar" alt="">{{ current_user.username }}</a>
           <form method="post" action="{{ base_path }}/logout" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="link-button" type="submit">Log out</button>
@@ -36,6 +38,7 @@
   </main>
   <footer class="shell footer">MiniOJ · Human-friendly, agent-ready.</footer>
   <script src="{{ url_for('static', path='/alerts.js') }}"></script>
+  <script src="{{ url_for('static', path='/code.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

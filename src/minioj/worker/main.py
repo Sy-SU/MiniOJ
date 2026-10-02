@@ -32,6 +32,7 @@ from minioj.problems import (
     ensure_problem_mutable,
     testcase_contents,
 )
+from minioj.submissions import sync_judge_run
 
 logger = logging.getLogger("minioj.worker")
 running = True
@@ -65,7 +66,7 @@ def exclusive_worker() -> Iterator[IO[str]]:
 
 def cleanup_stale_job_directories() -> int:
     removed = 0
-    for prefix in ("judge-", "testcase-build-", "run-"):
+    for prefix in ("judge-", "checker-", "testcase-build-", "run-", "metrics-"):
         for path in settings.jobs_dir.glob(f"{prefix}*"):
             if not path.is_dir() or path.is_symlink():
                 continue
@@ -108,6 +109,8 @@ def claim_next_submission() -> int | None:
                 started_at=datetime.now(UTC),
             )
         )
+        if claimed.rowcount == 1:
+            sync_judge_run(db, submission_id)
         db.commit()
         if claimed.rowcount != 1:
             return None
@@ -268,23 +271,31 @@ def recover_interrupted_work() -> tuple[int, int]:
     result = _ie_result(INTERRUPTED_SUBMISSION_SUMMARY)
     validate_submission_result(SubmissionStatus.FINISHED, Verdict.IE, None, result)
     with SessionLocal() as db:
-        submissions = db.execute(
-            update(Submission)
-            .where(
-                Submission.status.in_(
-                    [
-                        SubmissionStatus.COMPILING.value,
-                        SubmissionStatus.RUNNING.value,
-                    ]
+        recovered_ids = (
+            db.execute(
+                update(Submission)
+                .where(
+                    Submission.status.in_(
+                        [
+                            SubmissionStatus.COMPILING.value,
+                            SubmissionStatus.RUNNING.value,
+                        ]
+                    )
                 )
+                .values(
+                    status=SubmissionStatus.FINISHED.value,
+                    verdict=Verdict.IE.value,
+                    judge_result=json.dumps(result),
+                    finished_at=now,
+                )
+                .returning(Submission.id)
             )
-            .values(
-                status=SubmissionStatus.FINISHED.value,
-                verdict=Verdict.IE.value,
-                judge_result=json.dumps(result),
-                finished_at=now,
-            )
-        ).rowcount
+            .scalars()
+            .all()
+        )
+        for submission_id in recovered_ids:
+            sync_judge_run(db, submission_id)
+        submissions = len(recovered_ids)
         builds = db.execute(
             update(TestcaseBuild)
             .where(TestcaseBuild.status == TestcaseBuildStatus.RUNNING.value)
@@ -397,7 +408,11 @@ def process_testcase_build(build_id: int) -> None:
 
 
 def finish_with_ie(
-    submission_id: int, public_summary: str, *, internal_detail: str | None = None
+    submission_id: int,
+    public_summary: str,
+    *,
+    internal_detail: str | None = None,
+    generation: int | None = None,
 ) -> None:
     if internal_detail:
         logger.error(
@@ -413,6 +428,11 @@ def finish_with_ie(
             .where(
                 Submission.id == submission_id,
                 Submission.status != SubmissionStatus.FINISHED.value,
+                *(
+                    [Submission.judge_generation == generation]
+                    if generation is not None
+                    else []
+                ),
             )
             .values(
                 status=SubmissionStatus.FINISHED.value,
@@ -421,6 +441,8 @@ def finish_with_ie(
                 finished_at=datetime.now(UTC),
             )
         )
+        if finished.rowcount == 1:
+            sync_judge_run(db, submission_id, generation)
         db.commit()
         if finished.rowcount != 1:
             logger.warning(
@@ -430,6 +452,7 @@ def finish_with_ie(
 
 
 def judge_submission(submission_id: int) -> None:
+    generation = None
     try:
         with SessionLocal() as db:
             submission = db.get(Submission, submission_id)
@@ -438,6 +461,7 @@ def judge_submission(submission_id: int) -> None:
                 or submission.status != SubmissionStatus.COMPILING.value
             ):
                 return
+            generation = submission.judge_generation
             ensure_problem_mutable(db, submission.problem_id)
             db.refresh(submission)
             if submission.status != SubmissionStatus.COMPILING.value:
@@ -457,9 +481,14 @@ def judge_submission(submission_id: int) -> None:
             source_code = submission.source_code
             time_limit_ms = problem.time_limit_ms
             memory_limit_mb = problem.memory_limit_mb
+            checker = problem.checker
+            checker_bundle = problem.checker_bundle
+            checker_sha256 = problem.checker_sha256
             # Snapshot all judge inputs while serialized with testcase writers.
             # Release the database lock before starting any containers.
             tests = [testcase_contents(testcase) for testcase in testcase_rows]
+            testcase_types = [testcase.type for testcase in testcase_rows]
+            sample_flags = [kind == "sample" for kind in testcase_types]
 
         def mark_running() -> None:
             with SessionLocal() as db:
@@ -468,9 +497,12 @@ def judge_submission(submission_id: int) -> None:
                     .where(
                         Submission.id == submission_id,
                         Submission.status == SubmissionStatus.COMPILING.value,
+                        Submission.judge_generation == generation,
                     )
                     .values(status=SubmissionStatus.RUNNING.value)
                 )
+                if changed.rowcount == 1:
+                    sync_judge_run(db, submission_id, generation)
                 db.commit()
                 if changed.rowcount != 1:
                     raise InfrastructureError(
@@ -481,9 +513,27 @@ def judge_submission(submission_id: int) -> None:
             )
 
         logger.info("Submission %s compilation started", submission_id)
+        judge_options = {"on_compiled": mark_running}
+        if checker != "lines":
+            judge_options["checker"] = checker
+        if checker == "testlib":
+            from minioj.judge.testlib import CheckerBundle
+
+            judge_options["checker_bundle"] = CheckerBundle.load(
+                checker_bundle, checker_sha256
+            )
         compile_result, judge_result = DockerJudge(owner=settings.worker_owner).judge(
-            source_code, tests, time_limit_ms, memory_limit_mb, on_compiled=mark_running
+            source_code, tests, time_limit_ms, memory_limit_mb, **judge_options
         )
+        judge_result["testcase_types"] = testcase_types
+        failure = judge_result.get("failure")
+        if isinstance(failure, dict):
+            index = failure.get("test_index")
+            failure["is_sample"] = (
+                type(index) is int
+                and 1 <= index <= len(sample_flags)
+                and sample_flags[index - 1]
+            )
     except ValueError as exc:
         detail = str(exc)
         if "modified before judging" in detail:
@@ -500,6 +550,7 @@ def judge_submission(submission_id: int) -> None:
             submission_id,
             public_summary,
             internal_detail=detail,
+            generation=generation,
         )
         return
     except (InfrastructureError, OSError) as exc:
@@ -507,6 +558,7 @@ def judge_submission(submission_id: int) -> None:
             submission_id,
             "The judge infrastructure was unavailable. Please try again later.",
             internal_detail=str(exc),
+            generation=generation,
         )
         return
     except Exception:
@@ -514,6 +566,7 @@ def judge_submission(submission_id: int) -> None:
         finish_with_ie(
             submission_id,
             "The judge encountered an internal error. Please try again later.",
+            generation=generation,
         )
         return
     verdict = Verdict(judge_result["verdict"])
@@ -525,6 +578,7 @@ def judge_submission(submission_id: int) -> None:
             update(Submission)
             .where(
                 Submission.id == submission_id,
+                Submission.judge_generation == generation,
                 Submission.status.in_(
                     [
                         SubmissionStatus.COMPILING.value,
@@ -540,6 +594,8 @@ def judge_submission(submission_id: int) -> None:
                 finished_at=datetime.now(UTC),
             )
         )
+        if persisted.rowcount == 1:
+            sync_judge_run(db, submission_id, generation)
         db.commit()
     if persisted.rowcount != 1:
         logger.warning(

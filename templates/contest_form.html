@@ -1,0 +1,28 @@
+{% extends "management_base.html" %}
+{% block title %}{{ 'Edit' if contest else 'Create' }} contest · Management{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>{{ 'Edit' if contest else 'Create' }} contest</h1><a href="{{ base_path }}/manage/contests">Back to contests</a></div>
+{% if contest %}<div class="actions"><a href="{{ base_path }}/contests/{{ contest.id }}">Public page</a><a href="{{ base_path }}/contests/{{ contest.id }}/standings">Standings</a><a href="{{ base_path }}/manage/submissions?contest={{ contest.id }}">Submissions</a><span class="tag">{{ contest_status(contest) }}</span></div>{% endif %}
+<form method="post" class="form-stack console-editor">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Title<input name="title" maxlength="255" value="{{ contest.title if contest else '' }}" required></label>
+  <label>Description (Markdown)<textarea name="description" rows="6">{{ contest.description if contest else '' }}</textarea></label>
+  <div class="form-row">
+    <label>Start time (UTC)<input type="datetime-local" step="any" name="start_time" value="{{ contest_form_time(contest.start_time) if contest else '' }}" required></label>
+    <label>End time (UTC)<input type="datetime-local" step="any" name="end_time" value="{{ contest_form_time(contest.end_time) if contest else '' }}" required></label>
+  </div>
+  <label class="contest-problem-raw">Problem IDs in order<textarea id="contest-problem-ids" name="problem_ids" rows="6" placeholder="A1001&#10;A1002">{% if contest %}{{ contest.problems|map(attribute='problem_id')|join('\n') }}{% endif %}</textarea></label>
+  <section id="contest-problem-controls" class="contest-problem-controls" hidden aria-labelledby="contest-problems-heading">
+    <h2 id="contest-problems-heading">Problems</h2>
+    <ol id="contest-problem-list" class="contest-problem-list" aria-label="Contest problem order"></ol>
+    <div class="contest-problem-add">
+      <label>Existing problem ID<input id="contest-add-id" maxlength="80" placeholder="A1001" autocomplete="off"></label>
+      <button id="contest-add-problem" class="button button-secondary" type="button">Add problem</button>
+    </div>
+    <p id="contest-problem-status" class="muted" role="status" aria-live="polite"></p>
+  </section>
+  <p class="muted">Add existing problem IDs, remove entries, or use ↑ / ↓ to change A, B, C order, then save. Without JavaScript, edit one ID per line. Admin/system can change the problem list at any time; removing an entry keeps the problem and its submissions. Only times are locked after start. Existing practice problems remain publicly accessible.</p>
+  <button class="button" type="submit">Save contest</button>
+</form>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/contest_form.js') }}"></script>{% endblock %}

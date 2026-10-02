@@ -63,9 +63,11 @@ class Settings:
         "true",
         "yes",
     }
-    output_limit_bytes: int = int(os.getenv("MINIOJ_OUTPUT_LIMIT_BYTES", "1048576"))
+    output_limit_bytes: int = int(os.getenv("MINIOJ_OUTPUT_LIMIT_BYTES", "8388608"))
     compile_time_limit_ms: int = int(os.getenv("MINIOJ_COMPILE_TIME_LIMIT_MS", "30000"))
     compile_memory_mb: int = int(os.getenv("MINIOJ_COMPILE_MEMORY_MB", "512"))
+    checker_time_limit_ms: int = int(os.getenv("MINIOJ_CHECKER_TIME_LIMIT_MS", "10000"))
+    checker_memory_mb: int = int(os.getenv("MINIOJ_CHECKER_MEMORY_MB", "512"))
     source_limit_bytes: int = int(os.getenv("MINIOJ_SOURCE_LIMIT_BYTES", "262144"))
     stdin_limit_bytes: int = int(os.getenv("MINIOJ_STDIN_LIMIT_BYTES", "262144"))
     testcase_file_limit_bytes: int = int(
@@ -78,6 +80,12 @@ class Settings:
         os.getenv("MINIOJ_TESTCASE_BUILD_MEMORY_MB", "512")
     )
     generator_max_cases: int = int(os.getenv("MINIOJ_GENERATOR_MAX_CASES", "50"))
+    polygon_archive_limit_bytes: int = int(
+        os.getenv("MINIOJ_POLYGON_ARCHIVE_LIMIT_BYTES", "67108864")
+    )
+    polygon_expanded_limit_bytes: int = int(
+        os.getenv("MINIOJ_POLYGON_EXPANDED_LIMIT_BYTES", "268435456")
+    )
     token_default_days: int = int(os.getenv("MINIOJ_TOKEN_DEFAULT_DAYS", "90"))
     max_queued_submissions: int = int(
         os.getenv("MINIOJ_MAX_QUEUED_SUBMISSIONS", "1000")
@@ -120,9 +128,13 @@ class Settings:
             "MINIOJ_TESTCASE_FILE_LIMIT_BYTES": self.testcase_file_limit_bytes,
             "MINIOJ_COMPILE_TIME_LIMIT_MS": self.compile_time_limit_ms,
             "MINIOJ_COMPILE_MEMORY_MB": self.compile_memory_mb,
+            "MINIOJ_CHECKER_TIME_LIMIT_MS": self.checker_time_limit_ms,
+            "MINIOJ_CHECKER_MEMORY_MB": self.checker_memory_mb,
             "MINIOJ_TESTCASE_BUILD_TIME_LIMIT_MS": self.testcase_build_time_limit_ms,
             "MINIOJ_TESTCASE_BUILD_MEMORY_MB": self.testcase_build_memory_mb,
             "MINIOJ_GENERATOR_MAX_CASES": self.generator_max_cases,
+            "MINIOJ_POLYGON_ARCHIVE_LIMIT_BYTES": self.polygon_archive_limit_bytes,
+            "MINIOJ_POLYGON_EXPANDED_LIMIT_BYTES": self.polygon_expanded_limit_bytes,
             "MINIOJ_MAX_QUEUED_SUBMISSIONS": self.max_queued_submissions,
             "MINIOJ_MAX_QUEUED_RUNS": self.max_queued_runs,
             "MINIOJ_CUSTOM_RUN_WAIT_SECONDS": self.custom_run_wait_seconds,

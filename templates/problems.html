@@ -3,8 +3,18 @@
 {% block content %}
 <div class="page-heading">
   <div><p class="eyebrow">Problem library</p><h1>Problems</h1></div>
-  <p class="muted">{{ problems|length }} problem{% if problems|length != 1 %}s{% endif %}</p>
+  <p class="muted">{{ total }} problem{% if total != 1 %}s{% endif %}</p>
 </div>
+<form class="problem-list-controls" method="get" action="{{ base_path }}/problems">
+  <label for="problem-search">Search <input id="problem-search" name="q" value="{{ q }}" maxlength="200" placeholder="ID or title"></label>
+  <label for="problem-sort">Order <select id="problem-sort" name="sort">
+    <option value="default"{% if sort == 'default' %} selected{% endif %}>Default</option>
+    <option value="difficulty_asc"{% if sort == 'difficulty_asc' %} selected{% endif %}>Difficulty ↑</option>
+    <option value="difficulty_desc"{% if sort == 'difficulty_desc' %} selected{% endif %}>Difficulty ↓</option>
+  </select></label>
+  {% for key, value in request.query_params.multi_items() if key not in ['page', 'q', 'sort'] %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <button class="button button-small" type="submit">Apply</button>
+</form>
 <div class="table-wrap">
 <table>
   <thead><tr><th>ID</th><th>Title</th><th>Source</th><th>Rating</th><th>Tags</th></tr></thead>
@@ -14,7 +24,7 @@
       <td class="mono"><a href="{{ base_path }}/problems/{{ problem.id }}">{{ problem.id }}</a></td>
       <td><a class="table-title" href="{{ base_path }}/problems/{{ problem.id }}">{{ problem.title }}</a></td>
       <td>{{ problem.source or '—' }}</td>
-      <td>{{ problem.rating or '—' }}</td>
+      <td>{{ problem.rating if problem.rating is not none else '—' }}</td>
       <td><div class="tag-row">{% for tag in problem.tags.split(',') if tag.strip() %}<span class="tag">{{ tag.strip() }}</span>{% endfor %}</div></td>
     </tr>
   {% else %}
@@ -23,5 +33,9 @@
   </tbody>
 </table>
 </div>
+<nav class="problem-pagination" aria-label="Problem pages">
+  {% if page > 1 %}<a class="button button-small button-secondary" rel="prev" href="{{ previous_url }}">Previous</a>{% else %}<span class="muted" aria-disabled="true">Previous</span>{% endif %}
+  <span aria-current="page">Page {{ page }} / {{ pages }}</span>
+  {% if page < pages %}<a class="button button-small button-secondary" rel="next" href="{{ next_url }}">Next</a>{% else %}<span class="muted" aria-disabled="true">Next</span>{% endif %}
+</nav>
 {% endblock %}
-

@@ -87,7 +87,7 @@ def test_agent_problem_is_sanitized(client):
 
 
 def test_submission_isolation_and_structured_feedback(client):
-    admin, _ = add_user("admin", "admin")
+    admin, admin_token = add_user("admin", "admin")
     _, owner_token = add_user("owner")
     _, other_token = add_user("other")
     add_problem(admin.id)
@@ -133,7 +133,12 @@ def test_submission_isolation_and_structured_feedback(client):
         f"/api/v1/agent/submissions/{submission_id}/feedback", headers=auth(owner_token)
     )
     assert feedback.status_code == 200
-    assert feedback.json()["failure"]["expected"] == "3\n"
+    assert feedback.json()["failure"] == {"test_index": 1}
+
+    admin_feedback = client.get(
+        f"/api/v1/agent/submissions/{submission_id}/feedback", headers=auth(admin_token)
+    )
+    assert admin_feedback.json()["failure"]["expected"] == "3\n"
 
 
 def test_anonymous_mutation_is_rejected(client):
@@ -313,6 +318,7 @@ def test_feedback_policy_is_shared_by_agent_and_web(client, monkeypatch):
     )
     assert response.status_code == 200
     page = client.get(f"/submissions/{submission_id}")
-    assert "First failed test: 1" in page.text
+    assert "First failed test:" not in page.text
+    assert "Wrong answer." in page.text
     assert "secret input" not in page.text
     assert "secret expected" not in page.text

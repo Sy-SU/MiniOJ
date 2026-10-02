@@ -1,37 +1,65 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import threading
 import time
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from minioj.config import settings
 from minioj.database import SessionLocal, get_db
-from minioj.feedback import submission_feedback
-from minioj.judge import CustomRunStatus, SubmissionStatus
+from minioj.feedback import feedback_response, submission_feedback
+from minioj.judge import CustomRunStatus
+from minioj.judge.testlib import CheckerBundle
 from minioj.models import ApiToken, CustomRun, Problem, Submission, TestCase, User
+from minioj.permissions import Permission, can
 from minioj.problems import (
+    PROBLEM_PAGE_SIZE,
+    ProblemSort,
     add_testcase,
     delete_problem,
     delete_testcase,
     ensure_problem_mutable,
+    problem_list_query,
     update_problem,
     update_testcase,
 )
 from minioj.schemas import (
+    AgentProblemResponse,
+    CurrentUserResponse,
+    CustomRunResponse,
+    ErrorResponse,
+    FeedbackResponse,
     ProblemCreate,
+    ProblemDetailResponse,
+    ProblemSummaryResponse,
     RegisterRequest,
     RunRequest,
     SubmissionCreate,
+    SubmissionCreatedResponse,
+    SubmissionDetailResponse,
     TestCaseCreate,
+    TestCaseResponse,
+    TokenCreatedResponse,
     TokenCreateRequest,
+    TokenMetadataResponse,
+    UserCreatedResponse,
 )
 from minioj.security import (
     PROBLEM_ID_RE,
@@ -49,8 +77,13 @@ from minioj.server.dependencies import (
     current_user,
     require_session_csrf,
 )
+from minioj.submissions import enqueue_submission, rejudge_submission
 
-router = APIRouter(prefix="/api/v1", tags=["api"])
+API_ERROR_RESPONSES = {
+    code: {"model": ErrorResponse}
+    for code in (400, 401, 403, 404, 405, 409, 413, 422, 429, 500, 503)
+}
+router = APIRouter(prefix="/api/v1", tags=["api"], responses=API_ERROR_RESPONSES)
 logger = logging.getLogger("minioj.api")
 submission_queue_lock = threading.Lock()
 custom_run_queue_lock = threading.Lock()
@@ -100,13 +133,14 @@ def _problem_detail(problem: Problem, *, agent: bool = False) -> dict:
                 "source_url": problem.source_url,
                 "rating": problem.rating,
                 "tags": [tag.strip() for tag in problem.tags.split(",") if tag.strip()],
+                "checker": problem.checker,
             }
         )
     return data
 
 
 def _submission_detail(submission: Submission) -> dict:
-    judge = json.loads(submission.judge_result) if submission.judge_result else {}
+    judge = submission_feedback(submission, settings.feedback_policy)
     return {
         "submission_id": submission.id,
         "problem_id": submission.problem_id,
@@ -139,7 +173,11 @@ def _require_problem_mutable(db: Session, problem_id: str) -> None:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/auth/register", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/auth/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=UserCreatedResponse,
+)
 def api_register(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     username = payload.username.strip()
     email = payload.email.strip().lower()
@@ -181,7 +219,7 @@ def api_register(payload: RegisterRequest, db: Session = Depends(get_db)) -> dic
     }
 
 
-@router.get("/me")
+@router.get("/me", response_model=CurrentUserResponse)
 def api_me(user: User = Depends(current_user)) -> dict:
     return {
         "id": user.id,
@@ -190,10 +228,11 @@ def api_me(user: User = Depends(current_user)) -> dict:
         "role": user.role,
         "is_active": user.is_active,
         "created_at": _iso(user.created_at),
+        "feedback_mode": settings.feedback_policy,
     }
 
 
-@router.get("/tokens")
+@router.get("/tokens", response_model=list[TokenMetadataResponse])
 def list_tokens(
     user: User = Depends(current_user), db: Session = Depends(get_db)
 ) -> list[dict]:
@@ -216,7 +255,11 @@ def list_tokens(
     ]
 
 
-@router.post("/tokens", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/tokens",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TokenCreatedResponse,
+)
 def create_token(
     payload: TokenCreateRequest,
     request: Request,
@@ -257,22 +300,63 @@ def delete_token(
     token = db.get(ApiToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status_code=404, detail="Token not found")
-    db.delete(token)
+    if token.revoked_at is None:
+        token.revoked_at = datetime.now(UTC)
     db.commit()
+    logger.info("Revoked API token %s for user=%s", token.id, user.id)
     return Response(status_code=204)
 
 
-@router.get("/problems")
-def list_problems(db: Session = Depends(get_db)) -> list[dict]:
-    problems = db.scalars(
-        select(Problem)
-        .where(Problem.deleted_at.is_(None))
-        .order_by(Problem.created_at.desc())
-    ).all()
+@router.get(
+    "/problems",
+    response_model=list[ProblemSummaryResponse],
+    responses={
+        200: {
+            "description": "Existing array response; pagination headers appear only when page is provided.",
+            "headers": {
+                name: {
+                    "description": "Only present for an explicit paginated request.",
+                    "schema": {"type": "integer", "minimum": minimum},
+                }
+                for name, minimum in (
+                    ("X-Total-Count", 0),
+                    ("X-Page", 1),
+                    ("X-Page-Size", PROBLEM_PAGE_SIZE),
+                    ("X-Total-Pages", 1),
+                )
+            },
+        }
+    },
+)
+def list_problems(
+    response: Response,
+    page: int | None = Query(default=None, ge=1),
+    sort: ProblemSort = "default",
+    q: str = Query(default="", max_length=200),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    query = problem_list_query(q, sort, recent=True)
+    if page is not None:
+        total = db.scalar(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        )
+        pages = max(1, (total + PROBLEM_PAGE_SIZE - 1) // PROBLEM_PAGE_SIZE)
+        response.headers.update(
+            {
+                "X-Total-Count": str(total),
+                "X-Page": str(page),
+                "X-Page-Size": str(PROBLEM_PAGE_SIZE),
+                "X-Total-Pages": str(pages),
+            }
+        )
+        if page > pages:
+            return []
+        query = query.offset((page - 1) * PROBLEM_PAGE_SIZE).limit(PROBLEM_PAGE_SIZE)
+    problems = db.scalars(query).all()
     return [_problem_summary(problem) for problem in problems]
 
 
-@router.get("/problems/{problem_id}")
+@router.get("/problems/{problem_id}", response_model=ProblemDetailResponse)
 def get_problem(problem_id: str, db: Session = Depends(get_db)) -> dict:
     problem = db.get(Problem, problem_id)
     if problem is None or problem.deleted_at is not None:
@@ -280,7 +364,7 @@ def get_problem(problem_id: str, db: Session = Depends(get_db)) -> dict:
     return _problem_detail(problem)
 
 
-@router.get("/agent/problems/{problem_id}")
+@router.get("/agent/problems/{problem_id}", response_model=AgentProblemResponse)
 def get_agent_problem(
     problem_id: str, _user: User = Depends(bearer_user), db: Session = Depends(get_db)
 ) -> dict:
@@ -290,77 +374,83 @@ def get_agent_problem(
     return _problem_detail(problem, agent=True)
 
 
-@router.post("/submissions", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/submissions",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=SubmissionCreatedResponse,
+)
 def create_submission(
     payload: SubmissionCreate,
     request: Request,
     authorization: str | None = Header(default=None),
+    idempotency_key: str | None = Header(
+        default=None,
+        max_length=128,
+        description="Optional opaque request key; reuse the same key and payload after a transport timeout.",
+    ),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     require_session_csrf(request, authorization)
-    if payload.language != "cpp20":
-        raise HTTPException(status_code=422, detail="Only cpp20 is supported")
-    if len(payload.source_code.encode()) > settings.source_limit_bytes:
-        raise HTTPException(status_code=413, detail="Source code is too large")
-    try:
-        ensure_problem_mutable(db, payload.problem_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Problem not found") from exc
-    problem = db.get(Problem, payload.problem_id)
     with submission_queue_lock:
-        queued = db.scalar(
-            select(func.count(Submission.id)).where(
-                Submission.status == SubmissionStatus.QUEUED.value
-            )
+        submission = enqueue_submission(
+            db, user, payload, limits=settings, idempotency_key=idempotency_key
         )
-        if queued >= settings.max_queued_submissions:
-            raise HTTPException(
-                status_code=429,
-                detail="The submission queue is full. Please try again later.",
-                headers={"Retry-After": str(settings.overload_retry_after_seconds)},
-            )
-        submission = Submission(
-            user_id=user.id,
-            problem_id=payload.problem_id,
-            problem_revision=problem.revision,
-            language=payload.language,
-            source_code=payload.source_code,
-            status=SubmissionStatus.QUEUED.value,
-        )
-        db.add(submission)
-        db.commit()
-    logger.info(
-        "Created submission %s for user=%s problem=%s",
-        submission.id,
-        user.id,
-        problem.id,
-    )
+    # A replay returns the original acceptance response, not the current judge state.
+    return {"submission_id": submission.id, "status": "QUEUED"}
+
+
+@router.post(
+    "/manage/submissions/{submission_id}/rejudge",
+    status_code=202,
+    response_model=SubmissionCreatedResponse,
+)
+def api_rejudge(
+    submission_id: int,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_session_csrf(request, authorization)
+    submission = rejudge_submission(db, submission_id, user)
     return {"submission_id": submission.id, "status": submission.status}
 
 
-@router.get("/submissions/{submission_id}")
+@router.get("/submissions/{submission_id}", response_model=SubmissionDetailResponse)
 def get_submission(
     submission_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     submission = db.get(Submission, submission_id)
-    if submission is None or (submission.user_id != user.id and user.role != "admin"):
+    if submission is None or (
+        submission.user_id != user.id and not can(user, Permission.SUBMISSIONS)
+    ):
         raise HTTPException(status_code=404, detail="Submission not found")
     return _submission_detail(submission)
 
 
-@router.get("/agent/submissions/{submission_id}/feedback")
+@router.get(
+    "/agent/submissions/{submission_id}/feedback",
+    response_model=FeedbackResponse,
+    response_model_exclude_unset=True,
+)
 def get_agent_feedback(
     submission_id: int,
     user: User = Depends(bearer_user),
     db: Session = Depends(get_db),
 ) -> dict:
     submission = db.get(Submission, submission_id)
-    if submission is None or (submission.user_id != user.id and user.role != "admin"):
+    if submission is None or (
+        submission.user_id != user.id and not can(user, Permission.SUBMISSIONS)
+    ):
         raise HTTPException(status_code=404, detail="Submission not found")
-    return submission_feedback(submission, settings.feedback_policy)
+    return feedback_response(
+        submission,
+        settings.feedback_policy,
+        allow_hidden=can(user, Permission.SUBMISSIONS),
+    )
 
 
 def _queue_custom_run(user_id: int, payload: RunRequest, db: Session) -> int:
@@ -451,7 +541,7 @@ def _cancel_unclaimed_custom_run(job_id: int, error: str) -> None:
         db.commit()
 
 
-@router.post("/runs")
+@router.post("/runs", response_model=CustomRunResponse)
 async def custom_run(
     payload: RunRequest,
     request: Request,
@@ -470,7 +560,11 @@ async def custom_run(
     return await _wait_for_custom_run(job_id)
 
 
-@router.post("/admin/problems", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/admin/problems",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ProblemDetailResponse,
+)
 def admin_create_problem(
     payload: ProblemCreate,
     request: Request,
@@ -489,14 +583,14 @@ def admin_create_problem(
         )
     if db.get(Problem, payload.id):
         raise HTTPException(status_code=409, detail="Problem id already exists")
-    values = payload.model_dump()
+    values = _problem_write_values(payload)
     problem = Problem(**values, created_by=admin.id)
     db.add(problem)
     db.commit()
     return _problem_detail(problem)
 
 
-@router.put("/admin/problems/{problem_id}")
+@router.put("/admin/problems/{problem_id}", response_model=ProblemDetailResponse)
 def admin_update_problem(
     problem_id: str,
     payload: ProblemCreate,
@@ -512,8 +606,47 @@ def admin_update_problem(
     if payload.id != problem_id:
         raise HTTPException(status_code=422, detail="Problem id cannot be changed")
     _require_problem_mutable(db, problem_id)
-    update_problem(db, problem, payload.model_dump(exclude={"id"}))
+    values = _problem_write_values(payload)
+    values.pop("id")
+    if "checker" not in payload.model_fields_set:
+        for field in ("checker", "checker_name", "checker_bundle", "checker_sha256"):
+            values.pop(field, None)
+    update_problem(db, problem, values)
     return _problem_detail(problem)
+
+
+def _problem_write_values(payload: ProblemCreate) -> dict:
+    values = payload.model_dump(exclude={"checker_source"})
+    values.update(checker_name=None, checker_bundle=None, checker_sha256=None)
+    if payload.checker_source is not None:
+        try:
+            encoded = CheckerBundle(
+                "checker.cpp", {"checker.cpp": payload.checker_source}
+            ).serialize()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        values.update(
+            checker_name="checker.cpp",
+            checker_bundle=encoded,
+            checker_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
+        )
+    return values
+
+
+@router.get("/admin/problems/{problem_id}/checker")
+def admin_checker_metadata(
+    problem_id: str,
+    _admin: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    problem = db.get(Problem, problem_id)
+    if problem is None or problem.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    return {
+        "checker": problem.checker,
+        "name": problem.checker_name,
+        "sha256": problem.checker_sha256,
+    }
 
 
 @router.delete("/admin/problems/{problem_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -535,8 +668,25 @@ def admin_delete_problem(
     return Response(status_code=204)
 
 
+@router.get(
+    "/admin/problems/{problem_id}/testcases",
+    response_model=list[TestCaseResponse],
+)
+def admin_list_testcases(
+    problem_id: str,
+    _admin: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    problem = db.get(Problem, problem_id)
+    if problem is None or problem.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    return [_testcase_detail(testcase) for testcase in problem.testcases]
+
+
 @router.post(
-    "/admin/problems/{problem_id}/testcases", status_code=status.HTTP_201_CREATED
+    "/admin/problems/{problem_id}/testcases",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TestCaseResponse,
 )
 def admin_add_testcase(
     problem_id: str,
@@ -566,7 +716,10 @@ def admin_add_testcase(
     return _testcase_detail(testcase)
 
 
-@router.put("/admin/problems/{problem_id}/testcases/{testcase_id}")
+@router.put(
+    "/admin/problems/{problem_id}/testcases/{testcase_id}",
+    response_model=TestCaseResponse,
+)
 def admin_update_testcase(
     problem_id: str,
     testcase_id: int,

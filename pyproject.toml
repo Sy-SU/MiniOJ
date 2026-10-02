@@ -15,6 +15,7 @@ dependencies = [
   "jinja2>=3.1,<4",
   "markdown-it-py>=4,<5",
   "mdit-py-plugins>=0.6,<0.7",
+  "pillow>=11.3,<13",
   "python-multipart>=0.0.18,<1",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.30,<1",

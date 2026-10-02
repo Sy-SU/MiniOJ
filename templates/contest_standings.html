@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Standings · {{ contest.title }}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">{{ contest.title }}</p><h1>Standings</h1></div><a class="button button-secondary" href="{{ base_path }}/contests/{{ contest.id }}/standings">Refresh</a></div>
+<p class="muted">Solved ↓ · Penalty ↑ · 20 minutes per incorrect attempt before acceptance. CE/IE do not incur penalty. Performance estimates this contest only; it does not affect rank.</p>
+<div class="table-wrap standings-wrap"><table>
+  <thead><tr><th>Rank</th><th>User</th><th>Solved</th><th>Penalty</th><th>Performance</th>{% for p in problems %}<th><a href="{{ base_path }}/contests/{{ contest.id }}/problems/{{ problem_label(p.position) }}">{{ problem_label(p.position) }}</a></th>{% endfor %}</tr></thead>
+  <tbody>{% for row in rows %}<tr>
+    <td>{{ row.rank }}</td><td><a href="{{ base_path }}/users/{{ row.username }}">{{ row.username }}</a></td><td>{{ row.solved }}</td><td>{{ row.penalty }}</td><td>{{ row.performance }}</td>
+    {% for p in problems %}{% set cell = row.problems[p.problem_id] %}<td class="standing-cell {% if cell.solved %}standing-ac{% elif cell.wrong %}standing-wrong{% endif %}">{% if cell.solved %}<strong>AC{% if cell.wrong %} +{{ cell.wrong }}{% endif %}</strong><small>{{ cell.minute }} min</small>{% elif cell.wrong %}−{{ cell.wrong }}{% if cell.pending %} · Pending{% endif %}{% elif cell.pending %}Pending{% else %}—{% endif %}</td>{% endfor %}
+  </tr>{% else %}<tr><td colspan="{{ 5+problems|length }}">No participants yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+<p><a href="{{ base_path }}/contests/{{ contest.id }}">Back to contest</a></p>
+{% endblock %}

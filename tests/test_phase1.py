@@ -445,10 +445,10 @@ def test_problem_and_testcases_remain_editable_after_submission(client):
     assert client.get("/admin/problems/history-case/edit").status_code == 404
     deleted_page = client.get("/problems/history-case")
     assert deleted_page.status_code == 410
-    assert "This problem has been deleted" in deleted_page.text
+    assert "Problem not found" in deleted_page.text
     detail = client.get(f"/submissions/{submission_id}")
     assert detail.status_code == 200
-    assert "This problem has been deleted" in detail.text
+    assert "This problem has been deleted" not in detail.text
     with SessionLocal() as db:
         assert db.get(Problem, problem.id).title == "Updated"
         assert db.get(Problem, problem.id).deleted_at is not None
@@ -589,6 +589,7 @@ def test_hidden_data_is_not_public_and_html_fields_are_escaped(client):
                     "summary": "<script id=summary>x</script>",
                     "tests": {"total": 3, "passed": 0},
                     "failure": {
+                        "is_sample": True,
                         "input": "<script id=failure-input>x</script>",
                         "expected": "<script id=expected>x</script>",
                         "actual": "<script id=actual>x</script>",
@@ -626,13 +627,9 @@ def test_hidden_data_is_not_public_and_html_fields_are_escaped(client):
 
     login(client, "EscapeOwner")
     submission = client.get(f"/submissions/{submission_id}")
-    for marker in [
-        "source",
-        "compiler",
-        "summary",
-        "failure-input",
-        "expected",
-        "actual",
-    ]:
+    for marker in ["source", "compiler"]:
         assert f"<script id={marker}>" not in submission.text
         assert f"&lt;script id={marker}&gt;" in submission.text
+    # Phase 5 does not expose untrusted stored summaries at all.
+    assert "id=summary" not in submission.text
+    assert "Wrong answer." in submission.text

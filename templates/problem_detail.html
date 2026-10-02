@@ -5,10 +5,10 @@
 {% endblock %}
 {% block content %}
 <div class="problem-heading">
+  {% if contest %}<p class="contest-context"><a href="{{ base_path }}/contests/{{ contest.id }}">{{ contest.title }}</a> · {{ contest_label }} · {{ contest_status(contest) }}</p>{% endif %}
   <div><p class="eyebrow mono">{{ problem.id }}</p><h1>{{ problem.title }}</h1></div>
   <div class="limit-row"><span>{{ problem.time_limit_ms }} ms</span><span>{{ problem.memory_limit_mb }} MB</span></div>
 </div>
-{% if problem.revision > 1 %}<div class="alert alert-warning" role="alert">This problem has been modified. Earlier submission results may refer to a previous statement or testcase set.</div>{% endif %}
 <div class="problem-layout">
   <article class="problem-copy panel">
     <section><h2>Statement</h2><div class="prose markdown-body">{{ problem.statement|markdown }}</div></section>
@@ -24,7 +24,7 @@
   <aside class="workspace panel">
     <div class="workspace-head"><div><span class="label">Language</span><strong>C++20</strong></div><span class="status-dot" id="workspace-status">Ready</span></div>
     {% if current_user %}
-      <textarea id="code-editor" class="code-editor" spellcheck="false" aria-label="C++20 source code">#include &lt;bits/stdc++.h&gt;
+      <textarea id="code-editor" class="code-editor" spellcheck="false" aria-label="C++20 source code" aria-describedby="code-editor-help">#include &lt;bits/stdc++.h&gt;
 using namespace std;
 
 int main() {
@@ -33,6 +33,7 @@ int main() {
 
     return 0;
 }</textarea>
+      <p class="muted editor-key-help" id="code-editor-help">Tab: indent · Shift+Tab: unindent · Esc, then Tab: move focus</p>
       {% if problem.samples %}
       <label class="label" for="sample-select">Public sample</label>
       <select id="sample-select" class="sample-select" aria-label="Public sample">
@@ -61,6 +62,8 @@ int main() {
 window.MINIOJ = {
   basePath: {{ base_path|tojson }},
   problemId: {{ problem.id|tojson }},
+  submitPath: {% if contest %}{{ ('/api/v1/contests/' ~ contest.id ~ '/submissions')|tojson }}{% else %}"/api/v1/submissions"{% endif %},
+  checker: {{ problem.checker|tojson }},
   csrfToken: {{ csrf_token|tojson }},
   samples: {{ problem.samples|map(attribute='input')|list|tojson }}.map((input, index) => ({input, output: {{ problem.samples|map(attribute='output')|list|tojson }}[index]}))
 };

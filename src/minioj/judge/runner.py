@@ -18,6 +18,7 @@ from minioj.judge.contracts import (
     compile_result_payload,
     testcase_result_payload,
 )
+from minioj.judge.testlib import CheckerBundle, safe_bundle_path
 
 logger = logging.getLogger("minioj.judge")
 
@@ -44,6 +45,7 @@ class ProcessResult:
     stderr_truncated: bool = False
     stdout_valid_utf8: bool = True
     stderr_valid_utf8: bool = True
+    wall_time_ms: int | None = None
 
 
 class DockerJudge:
@@ -56,9 +58,16 @@ class DockerJudge:
             raise InfrastructureError("Docker CLI is not installed or is not on PATH.")
         try:
             check = subprocess.run(
-                ["docker", "image", "inspect", self.image],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    "--format",
+                    '{{ index .Config.Labels "minioj.cpu-accounting" }}',
+                    self.image,
+                ],
+                capture_output=True,
+                text=True,
                 timeout=10,
                 check=False,
             )
@@ -69,6 +78,11 @@ class DockerJudge:
         if check.returncode != 0:
             raise InfrastructureError(
                 f"Judge image {self.image!r} is unavailable. Build it with: "
+                "docker build -t minioj-cpp20:latest docker/cpp20"
+            )
+        if check.stdout.strip() != "cgroup-v2-v1":
+            raise InfrastructureError(
+                "The judge image does not provide the CPU supervisor. Rebuild it with: "
                 "docker build -t minioj-cpp20:latest docker/cpp20"
             )
 
@@ -153,10 +167,27 @@ class DockerJudge:
         command: list[str],
         *,
         read_only_mount: bool,
+        metrics_path: Path | None = None,
     ) -> list[str]:
         mount_spec = f"type=bind,source={mount},target=/work"
         if read_only_mount:
             mount_spec += ",readonly"
+        privileges = []
+        if metrics_path is not None:
+            # Trusted supervisor alone uses these; it drops all child capabilities
+            # and switches the submitted program to 1000:1000 before exec.
+            for capability in ("CHOWN", "SETUID", "SETGID", "KILL"):
+                privileges.extend(["--cap-add", capability])
+            # Deep recursion may use the problem's memory budget rather than
+            # Docker's unrelated default 8 MiB stack; cgroup RAM stays enforced.
+            stack_bytes = memory_mb * 1024 * 1024
+            privileges.extend(["--ulimit", f"stack={stack_bytes}:{stack_bytes}"])
+            privileges.extend(
+                [
+                    "--mount",
+                    f"type=bind,source={metrics_path},target=/minioj-result.json",
+                ]
+            )
         return [
             "docker",
             "create",
@@ -177,13 +208,14 @@ class DockerJudge:
             "64",
             "--cap-drop",
             "ALL",
+            *privileges,
             "--security-opt",
             "no-new-privileges",
             "--read-only",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=16m",
             "--user",
-            "1000:1000",
+            "0:0" if metrics_path is not None else "1000:1000",
             "--workdir",
             "/work",
             "--mount",
@@ -216,6 +248,21 @@ class DockerJudge:
         return observed if current is None else max(current, observed)
 
     @staticmethod
+    def _read_container_cpu_ms(container_id: str) -> int | None:
+        for directory in (
+            Path(f"/sys/fs/cgroup/system.slice/docker-{container_id}.scope"),
+            Path(f"/sys/fs/cgroup/docker/{container_id}"),
+        ):
+            try:
+                for line in (directory / "cpu.stat").read_text().splitlines():
+                    key, value = line.split()
+                    if key == "usage_usec":
+                        return max(0, int(value) // 1000)
+            except (OSError, ValueError):
+                continue
+        return None
+
+    @staticmethod
     def _remove_job_directory(job_dir: Path) -> None:
         try:
             shutil.rmtree(job_dir)
@@ -234,6 +281,8 @@ class DockerJudge:
         stdin_data: str,
         timeout_ms: int,
         output_limit: int,
+        *,
+        metrics_path: Path | None = None,
     ) -> ProcessResult:
         with (
             tempfile.TemporaryFile() as input_file,
@@ -282,7 +331,12 @@ class DockerJudge:
             timed_out = False
             output_exceeded = False
             memory_peak_kb: int | None = None
+            cpu_peak_ms = 0
             while process.poll() is None:
+                if metrics_path is not None:
+                    cpu_peak_ms = max(
+                        cpu_peak_ms, self._read_container_cpu_ms(container_id) or 0
+                    )
                 memory_peak_kb = self._higher_memory_peak(
                     memory_peak_kb, self._read_container_memory_peak(container_id)
                 )
@@ -345,6 +399,46 @@ class DockerJudge:
                     infrastructure_error = (
                         inspect.stderr.strip() or "Container was not created."
                     )
+            wall_time_ms = elapsed_ms
+            if metrics_path is not None:
+                try:
+                    metrics = json.loads(metrics_path.read_text())
+                    if (
+                        not isinstance(metrics, dict)
+                        or metrics.get("setup_error") is not False
+                        or type(metrics.get("cpu_time_ms")) is not int
+                        or metrics["cpu_time_ms"] < 0
+                        or type(metrics.get("wall_time_ms")) is not int
+                        or type(metrics.get("timed_out")) is not bool
+                        or type(metrics.get("exit_code")) is not int
+                        or (
+                            metrics.get("memory_kb") is not None
+                            and (
+                                type(metrics["memory_kb"]) is not int
+                                or metrics["memory_kb"] < 0
+                            )
+                        )
+                    ):
+                        raise ValueError("Invalid supervisor report")
+                    elapsed_ms = metrics["cpu_time_ms"]
+                    wall_time_ms = metrics["wall_time_ms"]
+                    if timed_out and not metrics["timed_out"] and not oom_killed:
+                        infrastructure_error = (
+                            "Docker attach did not complete within the host watchdog."
+                        )
+                    timed_out = metrics["timed_out"]
+                    exit_code = metrics["exit_code"]
+                    memory_peak_kb = self._higher_memory_peak(
+                        memory_peak_kb, metrics["memory_kb"]
+                    )
+                except (OSError, ValueError, KeyError, TypeError):
+                    if oom_killed or output_exceeded:
+                        # The whole container may be killed before the trusted
+                        # report is flushed. Use the last observed cgroup CPU
+                        # sample, never Docker CLI wall time, for this fallback.
+                        elapsed_ms = cpu_peak_ms
+                    else:
+                        infrastructure_error = "CPU supervisor report is unavailable or invalid; rebuild the judge image."
             cleanup_error = self._remove_container(name)
             if cleanup_error and infrastructure_error is None:
                 infrastructure_error = cleanup_error
@@ -389,10 +483,18 @@ class DockerJudge:
                 stderr_truncated=stderr_size > len(stderr_bytes),
                 stdout_valid_utf8=stdout_valid_utf8,
                 stderr_valid_utf8=stderr_valid_utf8,
+                wall_time_ms=wall_time_ms,
             )
 
-    def compile(self, job_dir: Path, source_code: str, memory_mb: int) -> ProcessResult:
-        source = job_dir / "main.cpp"
+    def compile(
+        self,
+        job_dir: Path,
+        source_code: str,
+        memory_mb: int,
+        *,
+        source_path: str = "main.cpp",
+    ) -> ProcessResult:
+        source = job_dir / safe_bundle_path(source_path)
         source.write_text(source_code, encoding="utf-8")
         source.chmod(0o644)
         job_dir.chmod(0o777)
@@ -401,7 +503,17 @@ class DockerJudge:
             name,
             max(memory_mb, settings.compile_memory_mb),
             str(job_dir),
-            ["g++", "-std=c++20", "-O2", "-pipe", "-o", "main", "main.cpp"],
+            [
+                "g++",
+                "-std=c++20",
+                "-O2",
+                "-pipe",
+                "-I",
+                ".",
+                "-o",
+                "main",
+                "./" + source_path,
+            ],
             read_only_mount=False,
         )
         result = self._run_limited(
@@ -429,39 +541,35 @@ class DockerJudge:
         output_limit: int | None = None,
     ) -> ProcessResult:
         name = "minioj-run-" + uuid.uuid4().hex
-        timeout_seconds = f"{time_limit_ms / 1000:.3f}s"
-        cmd = self._container_command(
-            name,
-            memory_limit_mb,
-            str(job_dir),
-            [
-                "timeout",
-                "--preserve-status",
-                "--signal=TERM",
-                "--kill-after=0.2s",
-                timeout_seconds,
-                "/work/main",
-                *(arguments or []),
-            ],
-            read_only_mount=True,
-        )
-        # GNU timeout measures only in-container execution. The host limit is a
-        # fallback for Docker startup/daemon failures and includes a grace period.
-        result = self._run_limited(
-            cmd,
-            name,
-            stdin_data,
-            time_limit_ms + 3000,
-            output_limit or settings.output_limit_bytes,
-        )
-        if (
-            result.exit_code in {137, 143}
-            and result.time_ms >= time_limit_ms
-            and not result.oom_killed
-            and not result.output_exceeded
-        ):
-            result.timed_out = True
-        return result
+        wall_limit_ms = max(1000, time_limit_ms * 5)
+        with tempfile.TemporaryDirectory(
+            prefix="metrics-", dir=settings.jobs_dir
+        ) as directory:
+            metrics_path = Path(directory) / "result.json"
+            metrics_path.touch(mode=0o666)
+            metrics_path.chmod(0o666)
+            cmd = self._container_command(
+                name,
+                memory_limit_mb,
+                str(job_dir),
+                [
+                    "/usr/local/bin/minioj-supervisor",
+                    str(time_limit_ms),
+                    str(wall_limit_ms),
+                    "/work/main",
+                    *(arguments or []),
+                ],
+                read_only_mount=True,
+                metrics_path=metrics_path,
+            )
+            return self._run_limited(
+                cmd,
+                name,
+                stdin_data,
+                wall_limit_ms + 3000,
+                output_limit or settings.output_limit_bytes,
+                metrics_path=metrics_path,
+            )
 
     def custom_run(
         self,
@@ -491,12 +599,12 @@ class DockerJudge:
                 }
             result = self.execute(job_dir, stdin_data, time_limit_ms, memory_limit_mb)
             status = "OK"
-            if result.timed_out:
+            if result.oom_killed:
+                status = "MLE"
+            elif result.timed_out:
                 status = "TLE"
             elif result.output_exceeded:
                 status = "OLE"
-            elif result.oom_killed:
-                status = "MLE"
             elif result.exit_code != 0:
                 status = "RE"
             return {
@@ -602,6 +710,60 @@ class DockerJudge:
         finally:
             self._remove_job_directory(root)
 
+    def _compile_checker(self, directory: Path, bundle: CheckerBundle) -> bool:
+        bundle.validate()
+        for relative, text in bundle.files.items():
+            path = directory / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            path.chmod(0o644)
+        result = self.compile(
+            directory,
+            bundle.files[bundle.entrypoint],
+            settings.checker_memory_mb,
+            source_path=bundle.entrypoint,
+        )
+        if not compile_result_payload(result)["success"]:
+            logger.error("Checker compilation failed: %s", result.stderr[:2000])
+            return False
+        return True
+
+    def _check_output(
+        self, directory: Path, input_data: str, actual: str, expected: str
+    ) -> Verdict:
+        case_dir = directory / "_minioj_case"
+        case_dir.mkdir(exist_ok=True)
+        for filename, value in (
+            ("input", input_data),
+            ("output", actual),
+            ("answer", expected),
+        ):
+            path = case_dir / filename
+            path.write_text(value, encoding="utf-8")
+            path.chmod(0o644)
+        checked = self.execute(
+            directory,
+            "",
+            settings.checker_time_limit_ms,
+            settings.checker_memory_mb,
+            arguments=[
+                "/work/_minioj_case/" + f for f in ("input", "output", "answer")
+            ],
+        )
+        if (
+            checked.timed_out
+            or checked.oom_killed
+            or checked.output_exceeded
+            or checked.exit_code not in {0, 1, 2, 4, 8}
+        ):
+            logger.error(
+                "Checker failed: exit %s, stderr %s",
+                checked.exit_code,
+                checked.stderr[:2000],
+            )
+            return Verdict.IE
+        return Verdict.AC if checked.exit_code == 0 else Verdict.WA
+
     def judge(
         self,
         source_code: str,
@@ -609,9 +771,13 @@ class DockerJudge:
         time_limit_ms: int,
         memory_limit_mb: int,
         on_compiled: Callable[[], None] | None = None,
+        *,
+        checker: str = "lines",
+        checker_bundle: CheckerBundle | None = None,
     ) -> tuple[dict, dict]:
         self.ensure_available()
         job_dir = Path(tempfile.mkdtemp(prefix="judge-", dir=settings.jobs_dir))
+        checker_dir: Path | None = None
         try:
             compiled = self.compile(job_dir, source_code, memory_limit_mb)
             compile_result = compile_result_payload(compiled)
@@ -628,6 +794,16 @@ class DockerJudge:
                 }
             if on_compiled is not None:
                 on_compiled()
+            if checker == "testlib":
+                if checker_bundle is None:
+                    raise ValueError("The problem's checker source is unavailable.")
+                checker_dir = Path(
+                    tempfile.mkdtemp(prefix="checker-", dir=settings.jobs_dir)
+                )
+                if not self._compile_checker(checker_dir, checker_bundle):
+                    return compile_result, self._checker_error(
+                        len(tests), 0, None, [], 0, None
+                    )
             max_time = 0
             max_memory: int | None = None
             passed = 0
@@ -639,15 +815,37 @@ class DockerJudge:
                 max_time = max(max_time, result.time_ms)
                 max_memory = self._higher_memory_peak(max_memory, result.memory_kb)
                 verdict: Verdict | None = None
-                if result.timed_out:
+                if result.oom_killed:
+                    verdict = Verdict.MLE
+                elif result.timed_out:
                     verdict = Verdict.TLE
                 elif result.output_exceeded:
                     verdict = Verdict.OLE
-                elif result.oom_killed:
-                    verdict = Verdict.MLE
                 elif result.exit_code != 0:
                     verdict = Verdict.RE
-                elif not outputs_match(result.stdout, expected):
+                elif checker_dir is not None:
+                    checked_verdict = (
+                        self._check_output(
+                            checker_dir, input_data, result.stdout, expected
+                        )
+                        if result.stdout_valid_utf8
+                        else Verdict.WA
+                    )
+                    if checked_verdict == Verdict.IE:
+                        test_results.append(
+                            testcase_result_payload(index, Verdict.IE, result)
+                        )
+                        return compile_result, self._checker_error(
+                            len(tests),
+                            passed,
+                            index,
+                            test_results,
+                            max_time,
+                            max_memory,
+                        )
+                    if checked_verdict == Verdict.WA:
+                        verdict = Verdict.WA
+                elif not outputs_match(result.stdout, expected, checker):
                     verdict = Verdict.WA
                 if verdict:
                     test_results.append(testcase_result_payload(index, verdict, result))
@@ -686,7 +884,26 @@ class DockerJudge:
                 "resources": {"time_ms": max_time, "memory_kb": max_memory},
             }
         finally:
+            if checker_dir is not None:
+                self._remove_job_directory(checker_dir)
             self._remove_job_directory(job_dir)
+
+    @staticmethod
+    def _checker_error(
+        total: int,
+        passed: int,
+        index: int | None,
+        test_results: list,
+        time_ms: int,
+        memory_kb: int | None,
+    ) -> dict:
+        return {
+            "verdict": Verdict.IE.value,
+            "summary": "The problem's checker failed. Please contact an administrator.",
+            "tests": {"total": total, "passed": passed, "failed_test": index},
+            "test_results": test_results,
+            "resources": {"time_ms": time_ms, "memory_kb": memory_kb},
+        }
 
     @staticmethod
     def _summary(verdict: Verdict, test_index: int) -> str:
