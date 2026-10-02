@@ -1,5 +1,6 @@
 .git
 .env
+*.orig
 __pycache__
 *.pyc
 .pytest_cache

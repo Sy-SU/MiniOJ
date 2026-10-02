@@ -4,6 +4,12 @@
 
 Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并推送为 `8d8cafc`。经用户授权，完整累积实现已分为 Core `a02bd86` 与 CF 工具 `18f94c3` 两个提交并正常推送 `origin/main`；首次 hosted CI 发现的测试夹具问题由独立 fix `40ede95` 修复。该提交的完整 hosted CI **725 passed，0 failed／0 skipped**，Ruff／JS／示例 Compose 全绿，当前为 **MiniOJ V1 source RC complete**；正式上线仍为 READY_WITH_NOTES。未部署／迁移正式环境、替换正式镜像或创建 tag；全部用户数据保留。下方“未 commit/push”等均为各轮历史边界，以顶部最新证据为准。
 
+## 最终 release hygiene（2026-10-02）
+
+- [x] 已有实现／验收：经本轮明确批准，仅取消 Git 跟踪 `compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig`；本地三个副本原样保留，SHA-256 与处理前一致。全仓代码／部署／测试检查未发现运行依赖，不改写历史、不删除过去提交的版本。
+- [x] 已有实现：`.gitignore` 沿用已有 `*.orig`，`.dockerignore` 同步排除 `*.orig`，防止旧 `runner.py.orig` 随 `COPY src ./src` 进入 Server image；不是业务功能修改。独立 hygiene 提交只包含上述两项文档／配置及三个 Git 删除记录。
+- [ ] 待验证：hygiene 新 HEAD 的完整 hosted CI；最终 production RC SHA 以该 CI 全绿提交为准。正式部署已获本轮授权，但必须先识别实际路径／服务、从该 SHA 构建新 Server／Judge RC 镜像、停止全部写入方并完成一致性备份和回滚点；迁移、production smoke 未完成前不创建 `v1.0.0`。本节以下均保留为此前验收快照。
+
 ## V1 源码 RC 提交与 hosted CI（2026-10-02；源码验收完成）
 
 - [x] 已提交／推送：`a02bd86b74e116b8d157dbcc43bb083c4fbfa0ce` — `feat: prepare MiniOJ V1 release candidate`，139 文件、20,479 insertions／636 deletions；`18f94c31c10d05cbc48e298ff8762066beb12d12` — `feat: add isolated Codeforces import tooling and reference selection`，26 文件、4,155 insertions／0 deletions。逐文件 allowlist staging、staged stat／name-status／check 通过，不强拆共享文件，不 force／amend／改写历史。
@@ -14,7 +20,7 @@ Phase 0–1 已提交并推送为 `dbeb9e6`，Phase 2–3 已按要求提交并�
 - [x] 已提交／推送独立修复：`40ede9585a057760d463d154c8fea186ef195fee` — `fix: resolve browser fixture redirects inside isolated client`，2 文件、29 insertions／7 deletions；push 前 HEAD／push 后远端 main 为该 SHA，工作区干净，未 amend 之前两个提交。
 - [x] Hosted CI 验收通过：[Checks run 37008639747](https://github.com/Sy-SU/MiniOJ/actions/runs/37008639747)，绑定 `40ede9585a057760d463d154c8fea186ef195fee`，push／attempt 1，**completed / success**，2026-10-02 12:49:34 UTC 完成。完整 `python -m pytest -ra` **725 passed（178.42s），0 failed／0 skipped**；包含原 723＋新增 2。Ruff format **117 文件**／lint、8 个应用 JS、示例 Compose 均实际执行通过；不是仅凭 workflow 文件或本地检查勾选。
 - [x] 当前状态：**MiniOJ V1 source RC complete**，不是 production deployed。源码／测试以已验证的 `40ede95` 为基准，后续仅同步发布文档，不宣称旧验收镜像与当前字节全部一致。runner 另有 action Node 20 弃用警告，但实际强制 Node 24 且步骤成功，本次不为非阻塞警告扩大 workflow 改动。
-- [ ] 遗留跟踪边界：`compose.yaml.orig`、`deploy/nginx.conf.orig`、`src/minioj/judge/runner.py.orig` 从旧远端基线就已跟踪，两个新提交没有增删或改写它们，字节／SHA-256 与旧历史和磁盘完全相同。之前仅检查 ignored `.orig` 样本不能证明所有旧备份均已取消跟踪；已询问是否只取消 Git 跟踪并保留磁盘，不擅自删除或改写旧历史。
+- [x] 遗留跟踪边界（本轮已关闭）：三个 `.orig` 从旧远端基线就已跟踪，Core／CF 提交未改动它们；本轮按明确批准仅取消跟踪、保留磁盘和原历史，详见顶部 hygiene 记录。
 
 后续需从 committed SHA 构建 RC image、协调停止全部写入方并做一致性备份、migration、deployment、production smoke／验证／回滚预案；完成正式部署验证后才考虑最终 `v1.0.0`。可以建议 `v1.0.0-rc1`，本轮不自动创建任何 tag，也不执行这些正式操作。下方发布审计及更早阶段保留为提交前历史快照。
 
